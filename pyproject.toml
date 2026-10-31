@@ -1,0 +1,9 @@
+[project]
+name = "agent"
+version = "0.0.0"
+requires-python = ">=3.12"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+addopts = "-m 'not fm and not net'"
+markers = ["fm: needs the on-device model and helper/fm-helper (run with: pytest -m fm)", "net: needs internet access (run with: pytest -m net)"]

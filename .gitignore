@@ -1,0 +1,7 @@
+.DS_Store
+._*
+.venv/
+.agent/
+__pycache__/
+.pytest_cache/
+helper/fm-helper
