@@ -281,7 +281,7 @@ def test_a_missing_import_in_a_test_is_named(tmp_path):
     (tmp_path / "words.py").write_text("def word_count(text):\n    return len(text.split())\n")
     (tmp_path / "test_words.py").write_text("def test_x(): pass\n")
     out = "E   NameError: name 'word_count' is not defined\nE   NameError: name 'other' is not defined\nE   NameError: name 'test_x' is not defined"
-    assert import_hint(tmp_path, out) == "add `from words import word_count` at the top of the test file"
+    assert import_hint(tmp_path, out) == "add `from words import word_count` at the top of the file that uses it"
     assert import_hint(tmp_path, "1 passed") == "" and import_hint(tmp_path, None) == ""
 
 
@@ -290,3 +290,10 @@ def test_a_syntax_error_shows_the_line_that_is_wrong(tmp_path):
     (tmp_path / "b.py").write_text("x = 1\n")
     got = syntax_errors(tmp_path, ["a.py", "b.py"])
     assert len(got) == 1 and got[0].startswith("a.py:") and "`" in got[0]
+
+
+def test_an_import_of_a_name_the_module_does_not_define_is_named(tmp_path):
+    from agent.verify import import_hint
+    (tmp_path / "calc.py").write_text("def add(a, b):\n    return a + b\n")
+    out = "E   ImportError: cannot import name 'sub' from 'calc' (/x/calc.py)\nE   ImportError: cannot import name 'y' from 'os'"
+    assert import_hint(tmp_path, out) == "define `sub` in calc.py"

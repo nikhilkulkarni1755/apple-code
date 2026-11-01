@@ -743,7 +743,7 @@ def test_a_new_test_that_forgets_its_import_gets_the_import_in_the_next_prompt(e
     forgot = lambda t, p=None: (t["insert_after"](path="calc.py", anchor="return a + b", text="\n\ndef sub(a, b):\n    return a - b"),
                                 t["create_file"](path="test_sub.py", content="def test_sub():\n    assert sub(5, 3) == 2\n"))
     fm, out = work(env, [forgot, idle])
-    assert "NameError: name 'sub' is not defined" in fm.prompts[1] and "Hint: add `from calc import sub` at the top of the test file" in fm.prompts[1]
+    assert "NameError: name 'sub' is not defined" in fm.prompts[1] and "Hint: add `from calc import sub` at the top of the file that uses it" in fm.prompts[1]
 
 
 def test_only_a_retry_is_sampled_at_a_different_temperature(env):
