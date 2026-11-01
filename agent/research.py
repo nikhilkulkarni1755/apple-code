@@ -45,8 +45,8 @@ def _work(item):
 
 
 def _only_looks(item):
-    """A step that researches ("research x", "slugs.py: research x") or a test step that names no file: nothing a test can verify."""
-    return bool(re.match(r"(?:[\w./-]+:\s*)?research\b", item.title, re.I)) or (item.kind == "test" and not _work(item)[1])
+    """A step that researches ("research x", "slugs.py: research x") or names no file ("finalize both rounds"): nothing a test can verify."""
+    return bool(re.match(r"(?:[\w./-]+:\s*)?research\b", item.title, re.I)) or not _work(item)[1]
 
 
 def _repeats(item, done):

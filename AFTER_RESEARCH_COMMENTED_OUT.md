@@ -73,3 +73,8 @@ Observations:
 5. Still open: logic the model gets wrong repeatedly (`slugify`), unicode arrows (`→`) in code, one hard `context_overflow` per P3 run.
 
 Planned edits for the next cycle (one PR each): (G) sample at a higher temperature from the second attempt on; (H) show the offending source line in a syntax error; (I) drop any step that names no file.
+
+### Edits made after rerun round 2
+- **G (PR #9):** from the second attempt on, the model is sampled at temperature 0.8 (first attempt at the default).
+- **H (PR #10):** a syntax error message ends with the offending line's text.
+- **I:** any step that names no file (`finalize round 1 and round 2`) is dropped, not only test steps.

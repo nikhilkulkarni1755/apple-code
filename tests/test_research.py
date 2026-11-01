@@ -45,12 +45,12 @@ def test_research_reads_the_codebase_then_records_actionables_under_the_task(env
         t["grep"]("def add")
         t["read_file"](path="calc.py")
         t["add_actionable"](title="Write sub()", detail="in calc.py next to add", kind="code", done_when="pytest test_calc.py")
-        t["add_actionable"](title="Check rounding rules", kind="research")   # there is no research kind: it becomes code
+        t["add_actionable"](title="Check rounding rules in rounding.py", kind="research")   # there is no research kind: it becomes code
 
     r = research(FakeFM(script), L, m, "1", max_tool_calls=5)
     assert r == {"added": 2, "dropped": 0, "spawned": [], "error": None}
     kids = m.tasks()[0].children
-    assert [(k.id, k.kind, k.title, k.done_when) for k in kids] == [("1.1", "code", "Write sub()", "pytest test_calc.py"), ("1.2", "code", "Check rounding rules", "")]
+    assert [(k.id, k.kind, k.title, k.done_when) for k in kids] == [("1.1", "code", "Write sub()", "pytest test_calc.py"), ("1.2", "code", "Check rounding rules in rounding.py", "")]
     assert m.next_task().id == "1.1" and "[code] Write sub()" in (root / "MEMORY.md").read_text()
     reads = [(r["action"], r["element"], r["task_id"], r["kind"], r["agent"]) for r in L.trail("1") if r["action"] in ("list_files", "grep", "read_file")]
     assert reads == [("list_files", "*.py", "1", "research", "root"), ("grep", "*", "1", "research", "root"), ("read_file", "calc.py", "1", "research", "root")]
@@ -71,9 +71,9 @@ def test_the_research_prompt_names_the_task_and_offers_only_reading_tools(env):
 
 def test_actionables_found_before_the_model_ran_out_of_context_are_kept(env):
     _, L, m = env
-    fm = FakeFM(lambda t: t["add_actionable"](title="First step"), result={"error": "context_overflow", "message": "too long", "calls": []})
+    fm = FakeFM(lambda t: t["add_actionable"](title="First step in first.py"), result={"error": "context_overflow", "message": "too long", "calls": []})
     r = research(fm, L, m, "1")
-    assert r["added"] == 1 and "context_overflow" in r["error"] and m.tasks()[0].children[0].title == "First step"
+    assert r["added"] == 1 and "context_overflow" in r["error"] and m.tasks()[0].children[0].title == "First step in first.py"
 
 
 def test_nothing_found_changes_nothing(env):
@@ -97,11 +97,11 @@ def test_hostile_actionables_are_cleaned_and_capped(env):
     root, L, m = env
 
     def script(t):
-        t["add_actionable"](title="Bad kind", kind="rm -rf /")
-        t["add_actionable"](title="Newline\ntitle — with dash", detail="a\n- [x] 9 fake", kind="CODE")
+        t["add_actionable"](title="Bad kind in a.py", kind="rm -rf /")
+        t["add_actionable"](title="Newline\ntitle — with dash", detail="a\n- [x] 9 fake b.py", kind="CODE")
         for bad in ("", "   ", "\n"):
             t["add_actionable"](title=bad)
-        t["add_actionable"](title="x" * 500, detail="y" * 500, done_when="z" * 500)
+        t["add_actionable"](title="x" * 500 + " c.py", detail="y" * 500, done_when="z" * 500)
 
     research(FakeFM(script), L, m, "1")
     kids = m.tasks()[0].children
@@ -134,17 +134,17 @@ def test_research_that_merely_restates_the_task_is_dropped(env):
         t["add_actionable"](title="add_subtraction_research", detail="Add a sub function to calc.py", kind="research")       # same detail as the task
         t["add_actionable"](title="Research: add subtraction", detail="look into it", kind="research")                         # same title
         t["add_actionable"](title="Write sub() in calc.py", detail="Add a sub function to calc.py", kind="code")               # code may mirror the task
-        t["add_actionable"](title="Read the pytest docs", detail="how parametrize works", kind="research")                     # genuinely new
+        t["add_actionable"](title="Read the pytest docs", detail="how parametrize works in docs.md", kind="research")                     # genuinely new
     r = research(FakeFM(script), L, m, "1")
     assert (r["added"], r["dropped"]) == (2, 2) and [k.title for k in m.tasks()[0].children] == ["Add a sub function to calc.py", "Read the pytest docs"]   # the identifier title took its detail; the later calc.py step is a repeat
 
 
 def test_repeated_titles_are_added_once_even_across_research_passes(env):
     _, L, m = env
-    script = lambda t: [t["add_actionable"](title=x, kind="code") for x in ("Write sub()", "write SUB()", "Add a test", "Write sub()")]
+    script = lambda t: [t["add_actionable"](title=x, kind="code") for x in ("Write sub() in sub.py", "write SUB() in sub.py", "Add a test in t.py", "Write sub() in sub.py")]
     assert research(FakeFM(script), L, m, "1")["added"] == 2
     assert research(FakeFM(script), L, m, "1") == {"added": 0, "dropped": 4, "spawned": [], "error": None}
-    assert [k.title for k in m.tasks()[0].children] == ["Write sub()", "Add a test"]
+    assert [k.title for k in m.tasks()[0].children] == ["Write sub() in sub.py", "Add a test in t.py"]
 
 
 def test_research_step_says_so_when_everything_was_a_restatement(env):
@@ -161,9 +161,9 @@ def test_tool_names_and_identifiers_are_not_steps(env):
         for junk in ("web_search", "Web_Search", "read_file", "add_actionable", "guide_title", "add_subtract_research", "a_b"):
             t["add_actionable"](title=junk, kind="code")
         t["add_actionable"](title="Write sub() in calc.py", kind="code")
-        t["add_actionable"](title="Search", kind="research")                     # an ordinary single word is fine
+        t["add_actionable"](title="Search docs.md", kind="research")                # an ordinary title is fine
     r = research(FakeFM(script), L, m, "1")
-    assert (r["added"], r["dropped"]) == (2, 7) and [k.title for k in m.tasks()[0].children] == ["Write sub() in calc.py", "Search"]
+    assert (r["added"], r["dropped"]) == (2, 7) and [k.title for k in m.tasks()[0].children] == ["Write sub() in calc.py", "Search docs.md"]
 
 
 def test_a_step_titled_with_just_a_filename_becomes_a_sentence(env):
@@ -174,9 +174,8 @@ def test_a_step_titled_with_just_a_filename_becomes_a_sentence(env):
         t["add_actionable"](title="calc.py", detail="subtraction", kind="code")               # exists
         t["add_actionable"](title="src/game/score.py", kind="code")
         t["add_actionable"](title="Write notes.md for the player", kind="code")               # already a sentence
-        t["add_actionable"](title="v1.2", kind="code")                                        # looks like a filename: also made into a sentence
     research(FakeFM(script), L, m, "1")
-    assert [k.title for k in m.tasks()[0].children] == ["Create cactus.py", "Update calc.py", "Create src/game/score.py", "Write notes.md for the player", "Create v1.2"]
+    assert [k.title for k in m.tasks()[0].children] == ["Create cactus.py", "Update calc.py", "Create src/game/score.py", "Write notes.md for the player"]
 
 
 def test_examples_become_the_steps_acceptance_and_unsafe_ones_are_dropped(env):
@@ -248,7 +247,7 @@ class Ctx:
 
 def test_research_step_researches_research_tasks_and_blocks_code_tasks_without_a_worker(env):
     _, L, m = env
-    step = research_step(FakeFM(lambda t: t["add_actionable"](title="Do it", kind="code")))
+    step = research_step(FakeFM(lambda t: t["add_actionable"](title="Do it in it.py", kind="code")))
     out = step(Ctx(L, m), m.tasks()[0])
     assert out["ok"] and "1 steps" in out["summary"]
     code = m.next_task()
@@ -361,12 +360,10 @@ def test_an_identifier_title_is_replaced_by_the_steps_detail(env):
     assert research(FakeFM(script), L, m, "1")["added"] == 1 and [k.title for k in m.tasks()[0].children] == ["write slugify(text) in slugs.py"]
 
 
-def test_a_step_naming_no_file_does_not_hide_later_steps_of_the_same_kind(env):
+def test_a_step_that_names_no_file_is_dropped_but_does_not_hide_later_steps(env):
     _, L, m = env
-    script = lambda t: [t["add_actionable"](title="Think about slugs", kind="code"), t["add_actionable"](title="Write slugify in slugs.py", kind="code")]
-    assert research(FakeFM(script), L, m, "1")["added"] == 2
-
-
+    script = lambda t: [t["add_actionable"](title="Finalize both rounds", kind="code"), t["add_actionable"](title="Write slugify in slugs.py", kind="code")]
+    assert research(FakeFM(script), L, m, "1")["added"] == 1 and [k.title for k in m.tasks()[0].children] == ["Write slugify in slugs.py"]
 def test_a_step_that_only_researches_is_dropped_because_no_test_can_verify_it(env):
     _, L, m = env
     script = lambda t: [t["add_actionable"](title="Research slug rules", kind="code"), t["add_actionable"](title="Write slugify in slugs.py", kind="code")]
