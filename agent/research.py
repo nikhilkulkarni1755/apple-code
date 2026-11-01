@@ -43,6 +43,11 @@ def _work(item):
     return item.kind, frozenset(f for f in _FILENAME.findall(f"{item.title} {item.detail}") if Path(f).suffix in _FILE_TYPES)
 
 
+def _only_looks(item):
+    """A step that researches ("research x", "slugs.py: research x") or a test step that names no file: nothing a test can verify."""
+    return bool(re.match(r"(?:[\w./-]+:\s*)?research\b", item.title, re.I)) or (item.kind == "test" and not _work(item)[1])
+
+
 def _repeats(item, done):
     kind, files = _work(item)
     return bool(files) and any(k == kind and f and (files <= f or f <= files) for k, f in done)   # the same files, or some of them, for the same kind of work
@@ -84,7 +89,7 @@ def research(fm, ledger, memory, task_id, web=None, spawn=None, max_tool_calls=8
         kept = []
         for t in found:                     # each title once in the whole plan, no kind of work on the same files twice in the whole plan
             t.title = t.detail if _junk_title(t.title) and t.detail else _tidy_title(t.title, files)   # 'write_slug' says nothing, its detail does
-            if not _junk_title(t.title) and not t.title.casefold().startswith("research") and t.title.casefold() not in seen and not _repeats(t, done):
+            if not _junk_title(t.title) and not _only_looks(t) and t.title.casefold() not in seen and not _repeats(t, done):
                 kept.append(t)
                 seen.add(t.title.casefold())
                 done.append(_work(t))
