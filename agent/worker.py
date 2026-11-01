@@ -7,7 +7,7 @@ from .handoff import BUDGET, MAX_CONTINUATIONS, continuation_depth, looked_at, n
 from .ledger import ActionError
 from .memory import Task
 from .research import research_step
-from .spec import ensure_spec_test
+from .spec import ensure_spec_test, join_examples, module_of, propose_examples
 from .runner import run_tests
 from .tools import make_tools, visible_files
 from .verify import (acceptance_args, failure_summary, frozen_check, is_test_path, judge, protected_violations, red_check, syntax_errors,
@@ -25,7 +25,7 @@ def _edits_of_the_task(ledger, agent, task_id, iteration=None):
             if not r["path"].endswith("MEMORY.md") and r["iteration"] != 0]   # bookkeeping and the harness's own spec tests are not the model's work
 
 
-def work_task(fm, ledger, memory, task, agent="root", web=None, max_iterations=4, max_tool_calls=12, say=None):
+def work_task(fm, ledger, memory, task, agent="root", web=None, max_iterations=4, max_tool_calls=12, say=None, propose=False):
     """Carry out one code task. Returns {'ok', 'summary', 'evidence'}; on failure the task's edits are rolled back (redo restores them)."""
     say = say or (lambda text: None)
     text = f"{task.title} {task.detail} {task.done_when}"
@@ -35,6 +35,17 @@ def work_task(fm, ledger, memory, task, agent="root", web=None, max_iterations=4
             spec_path = ensure_spec_test(ledger, text, f"{task.done_when};{task.detail}")
     except ActionError:
         spec_path = None
+    if spec_path is None and propose and module_of(text):   # no examples given: ask the model for some, keep them with the task, and test against them
+        examples = join_examples(propose_examples(fm, f"{task.title}. {task.detail}"))
+        if examples:
+            try:
+                with ledger.scope(task=task.id, kind="test", iteration=0):
+                    spec_path = ensure_spec_test(ledger, text, examples)
+                    ledger.log_read("examples", task.id, {"proposed": True}, examples)
+                memory.set_done_when(task.id, examples)
+                say("  examples proposed: " + examples[:140])
+            except ActionError:
+                pass
     start_files = ledger._snapshot()                                               # the project as it is before any work
     originals = {p: t for p, t in start_files.items() if is_test_path(p)}
     roots = {p.split("/")[0].removesuffix(".py") for p in start_files if p.endswith(".py") and not is_test_path(p)}

@@ -215,6 +215,16 @@ class Memory:
                                            + (f"Next: {nxt.id} {nxt.title}" if nxt else f"Nothing left to do; {blocked} blocked." if blocked else "All tasks done."))
         return self._save(pre, secs)
 
+    def set_done_when(self, task_id, text):
+        """Write the acceptance text of a task (for example the examples a step was given) so that it survives a restart or a handoff."""
+        pre, secs = self._load()
+        plan = parse_tasks(secs.get("Task plan", ""))
+        task = next((t for t in _walk(plan) if t.id == task_id), None)
+        if task is None:
+            raise ActionError(f"no task {task_id!r}")
+        task.done_when = clean(text, 200) if isinstance(text, str) else ""
+        return self._save_plan(pre, secs, plan)
+
     def add_handoff(self, task_id, text):
         """Keep a note for whoever picks the task up next. One line per task id, newest wins."""
         pre, secs = self._load()

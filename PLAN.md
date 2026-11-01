@@ -342,3 +342,33 @@ Each attempt leaves a `verify` record (ok, or rejected with the reasons). Two at
 All checks, in order, after the tests pass: assertion check, frozen original tests, red then green. Each failure is explained to the model in the next attempt.
 
 **Still not caught:** a test with a real assertion that checks something trivial (for example that a function exists). This verifier raises the cost of faking, it does not make it impossible; reading the tests the model wrote remains worthwhile.
+
+## 20. Is the 3B model too weak? Budget, concurrency, and what actually limits it (measured)
+
+### Concurrency
+Requests to the on-device model are accepted concurrently and never error, but they are served one at a time: 4 requests at once took 3.74 s against 3.82 s one after another; 8 at once 7.22 s against 7.63 s; three separate helper processes at once 2.73 s against 2.96 s (time-sliced, each about three times slower). Each session keeps its own full context window. Two requests on the same session at once is an error (Apple calls it a programmer error). So parallel subagents are safe and give no speed-up; the model is the shared bottleneck. (A first measurement was wrong because another run was using the model at the same time; check for stray `fm-helper` processes before benchmarking.)
+
+### The 7K wind-down (`agent/handoff.py`, helper `budget_tokens`)
+The helper keeps a running token count per session (instructions, tools and prompt, then every tool call and result), scaled by 1.25 because the raw count undercounted the framework's own formatting by 5 to 20% in measurement. Once it crosses 7,168 the next tool call is refused and the session ends with `reason: budget`, before Apple's hard limit throws. Worker: verified work is complete; otherwise the next fresh session is told to work in smaller pieces; when attempts run out after a budget stop, safe partial work (it parses, original tests still pass) is kept, a handoff note is written to the `Handoffs` section of `MEMORY.md` (what was asked, what is done, what is still wrong, what was already looked at), and a "Continue: ..." task is queued. Research: steps found so far are kept and a "Continue researching" task lists what was already read. A continuation of a continuation is the limit. In all 14+14+14 worker runs below no session reached the budget: true peak use was 1,316 to 6,297 tokens (77% at most), so the window is not what limits the worker. A session that is cut off by the 12-tool-call cap reports a misleading 748 tokens from Apple's own transcript count (it omits the unfinished turn); the running estimate is the reliable figure.
+
+### The size ladder (`experiments/measure_ladder.py`): 7 precisely specified tasks, from a one-line function to a small physics class, 2 runs each, results also checked against hidden tests
+| Who writes the tests | Verified | Actually correct |
+|---|---|---|
+| The model writes both tests and code | 3 / 14 | 3 / 3 |
+| Same, after `create_file` was changed to replace existing files | 5 / 14 | 5 / 5 |
+| **The tests are supplied ready-made; the model writes only the code** | **11 / 14** | **11 / 11** |
+| The model proposes examples, the harness writes the tests (10 of 14 runs completed) | 3 / 10 | 2 / 3 (one false positive) |
+
+Success did not follow task size. The big lever was who writes the tests. With tests supplied, functions, a rule, a 22-line function with logic, a 3-method class and a physics class were mostly done on the first or second attempt (typically 4 to 50 seconds). Remaining failures: the dict-copying function (0/2, and the model tried to edit the supplied test, which the protection stopped) and one physics run. Nothing a verified run produced was wrong in the first three setups; in the fourth, one was.
+
+### Why tests written by the model fail, and the fix for one cause
+In a failing run, 9 of 12 tool calls in one session were the same error, `collide.py already exists`: the model's natural way to rewrite a file is to create it again, and `create_file` refused. `create_file` now replaces an existing file as one recorded, undoable change; the protected-tests rule still catches a rewrite that weakens a test.
+
+### Can the model supply the examples itself? Partly (`experiments/grade_examples.py`, 21 proposals graded against reference implementations)
+For plain functions the examples are mostly true (all of L2, L3 and L5; L1 had a wrong one in 2 of 3 samples, for example `add_points(10, 4) == 40`; L4 had one wrong edge case). Overall 53 examples true, 5 false, 5 errors, 40 unusable. Stateful classes are the problem: the model writes method chains (`game().tick(2).final_score`) or several statements that cannot be one comparison. A wrong example is worse than none: it makes the step unsatisfiable, or, if the implementation happens to agree, lets wrong behavior be verified (it happened once). So model-proposed examples are available (`work_task(..., propose=True)`) but off by default, and the supplied-tests setup remains the strongest measured result.
+
+### What this means
+- The model is not too weak to implement small, well-specified units; it is the writing of reliable tests (and plans with content: the dino plans had six steps with identical text) that it cannot do.
+- Verification is only as good as the examples or tests. A user-written test file in the project is already handled (existing tests are protected, a red baseline is allowed, the model's job is to make them pass), and is the most reliable way to build something large with this model: write tests per function or class, then `apple-code solve "make the tests in tests/test_x.py pass"`.
+- A step can carry examples (`agent/spec.py`): the harness parses them with a strict AST whitelist (comparisons of calls only; no dunder names, file, process or import access, lambdas or comprehensions; 50 hostile cases tested), writes the pytest file before the model starts, and protects it. This gives each step a precise, checkable statement of what it will do, which a continuation inherits.
+- Next experiments worth doing: allow a small safe multi-statement form for class examples; take only examples that appear in two of three proposals to filter wrong arithmetic; rerun the dino goal with tests supplied per function.

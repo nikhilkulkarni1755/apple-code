@@ -7,6 +7,8 @@ import ast
 import builtins
 import re
 
+from .fm import Tool
+
 MAX_EXAMPLES = 8
 MAX_LENGTH = 200
 _NODES = (ast.Expression, ast.Compare, ast.Call, ast.Attribute, ast.Name, ast.Constant, ast.Tuple, ast.List, ast.Dict, ast.Set, ast.UnaryOp,
@@ -96,3 +98,22 @@ def ensure_spec_test(ledger, text, examples_text):
         return path
     ledger.do("create_file", {"path": path, "content": render_test(found[0], examples)})
     return path
+
+
+def propose_examples(fm, text):
+    """Ask the model for examples of what a step must do (a call and its exact result each), one short session. Returns the ones that
+    parse as safe comparisons. The examples decide what counts as correct, so a step whose examples are wrong is blocked or, worse, verified
+    wrongly: they are as good as the model's reading of the step."""
+    found = []
+
+    def add_example(example):
+        found.append(example)
+        return f"example {len(found)} added"
+
+    tool = Tool("add_example", "Add one example: a call and its exact expected result, as a Python comparison.",
+                [{"name": "example", "type": "string", "description": "such as name(1, 2) == 3", "optional": False}], add_example)
+    prompt = (f"Task: {text}\nWrite 3 to 5 examples that show exactly what this must do, including one edge case. "
+              "Call add_example once for each. An example is a call and its expected result, such as name(1, 2) == 3.")
+    fm.run(prompt, [tool], "You write test examples for a coding task.", max_tool_calls=8)
+    return parse_examples("; ".join(str(e) for e in found))
+

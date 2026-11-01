@@ -4,7 +4,7 @@ import sys
 import pytest
 
 from agent.ledger import Ledger
-from agent.spec import MAX_EXAMPLES, ensure_spec_test, join_examples, module_of, parse_examples, render_test, spec_test_path
+from agent.spec import MAX_EXAMPLES, ensure_spec_test, join_examples, module_of, parse_examples, propose_examples, render_test, spec_test_path
 
 
 @pytest.mark.parametrize("text,expected", [
@@ -117,3 +117,35 @@ def test_generated_tests_really_run_under_pytest_and_fail_until_the_code_exists(
     assert green.returncode == 0 and "2 passed" in green.stdout
     (L.root / "score.py").write_text("def add_points(score, jumped):\n    return score + jumped\n")
     assert run().returncode != 0
+
+
+
+class Proposer:
+    """Stands in for the model: calls add_example with whatever it is told to."""
+
+    def __init__(self, examples=(), result=None):
+        self.examples, self.result, self.prompts, self.tools = list(examples), result or {"content": "", "stopped": False, "calls": []}, [], []
+
+    def run(self, prompt, tools, instructions="", max_tool_calls=8, **kw):
+        self.prompts.append(prompt)
+        self.tools.append([t.name for t in tools])
+        for e in self.examples:
+            tools[0].handler(e)
+        return self.result
+
+
+def test_proposed_examples_are_filtered_through_the_same_safety_rules():
+    fm = Proposer(["add(1, 2) == 3", "__import__('os').system('x') == 0", "garbage", 5, None, ["f(1) == 1"], "add(0, 0) == 0"])
+    assert propose_examples(fm, "Create calc.py with add") == ["add(1, 2) == 3", "add(0, 0) == 0"]
+
+
+def test_the_model_is_asked_about_the_step_with_a_single_tool():
+    fm = Proposer(["f(1) == 1"])
+    propose_examples(fm, "Create calc.py with add(a, b) returning a + b")
+    assert fm.tools == [["add_example"]] and "Create calc.py with add(a, b) returning a + b" in fm.prompts[0] and "3 to 5 examples" in fm.prompts[0]
+
+
+def test_a_model_that_gives_nothing_or_fails_yields_no_examples():
+    assert propose_examples(Proposer([]), "x") == []
+    assert propose_examples(Proposer(["f(1) == 1"], {"error": "guardrail", "message": "blocked", "calls": []}), "x") == ["f(1) == 1"]   # what it gave before failing is usable
+    assert propose_examples(Proposer(["nonsense", "more nonsense"]), "x") == []

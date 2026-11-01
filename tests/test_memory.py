@@ -245,3 +245,27 @@ def test_the_state_line_does_not_claim_everything_is_done_while_tasks_are_blocke
     assert m.get("Current state") == "1/2 tasks done. Nothing left to do; 1 blocked." and m.next_task() is None
     m.mark("2", "done")
     assert m.get("Current state") == "2/2 tasks done. All tasks done."
+
+
+def test_the_acceptance_text_of_a_task_can_be_set_and_survives_a_restart(mem):
+    root, _, m = mem
+    m.add_plan("goal", [Task("Write sub", done_when="old"), Task("Write mul")])
+    m.set_done_when("2", "mul(2, 3) == 6; mul(0, 5) == 0")
+    assert [t.done_when for t in m.tasks()] == ["old", "mul(2, 3) == 6; mul(0, 5) == 0"]
+    assert [t.done_when for t in Memory(Ledger(root)).tasks()] == ["old", "mul(2, 3) == 6; mul(0, 5) == 0"]
+    m.set_done_when("1", "line one\nline two (done when: x)")
+    assert m.tasks()[0].done_when == "line one line two (done when - x)"
+    m.set_done_when("1", "x" * 500)
+    assert len(m.tasks()[0].done_when) == 200
+    m.set_done_when("1", None)
+    assert m.tasks()[0].done_when == ""
+
+
+@pytest.mark.parametrize("bad", ["", "9", None, "1.1", "../1"])
+def test_setting_the_acceptance_text_of_an_unknown_task_is_rejected(mem, bad):
+    root, _, m = mem
+    m.add_plan("goal", [Task("Write sub")])
+    before = (root / "MEMORY.md").read_bytes()
+    with pytest.raises(ActionError):
+        m.set_done_when(bad, "f(1) == 1")
+    assert (root / "MEMORY.md").read_bytes() == before

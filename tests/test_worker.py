@@ -331,6 +331,84 @@ def test_hostile_examples_in_a_step_write_nothing_and_do_not_stop_the_work(env):
     assert out["ok"] and not (root / "pwned").exists() and not list(root.glob("test_*_spec.py"))
 
 
+# ------------------------------------------------------------------ the model proposes the examples (propose=True)
+class ProposingFM(FakeFM):
+    """Answers the 'propose examples' session itself and leaves everything else to the scripted attempts."""
+
+    def __init__(self, attempts, examples):
+        super().__init__(attempts)
+        self.examples, self.proposals = examples, 0
+
+    def run(self, prompt, tools, instructions="", max_tool_calls=8, temperature=None, budget_tokens=None):
+        t = {x.name: x.handler for x in tools}
+        if "add_example" in t:
+            self.proposals += 1
+            for e in self.examples:
+                t["add_example"](e)
+            return {"content": "", "stopped": False, "calls": []}
+        return super().run(prompt, tools, instructions, max_tool_calls, temperature, budget_tokens)
+
+
+@pytest.fixture
+def plain_env(env):
+    root, L, m, _ = env
+    m.add_plan("Subtraction", [Task("Add sub() to calc.py", "Create sub(a, b) returning a - b in calc.py", kind="code")])
+    return root, L, m, m.tasks()[1]
+
+
+def test_proposed_examples_become_the_tests_and_are_kept_with_the_task(plain_env):
+    root, L, m, task = plain_env
+    lines = []
+    fm = ProposingFM([only_code], ["sub(5, 3) == 2", "sub(0, 4) == -4"])
+    out = work_task(fm, L, m, task, propose=True, say=lines.append)
+    assert out["ok"] and fm.proposals == 1 and "tests are already written in test_calc_spec.py" in fm.prompts[-1]
+    assert (root / "test_calc_spec.py").read_text().count("def test_spec_") == 2 and "3 passed" in out["evidence"]
+    assert m.tasks()[1].done_when == "sub(5, 3) == 2; sub(0, 4) == -4" and Memory(Ledger(root)).tasks()[1].done_when == "sub(5, 3) == 2; sub(0, 4) == -4"
+    assert any(l.startswith("  examples proposed: sub(5, 3) == 2") for l in lines)
+    assert [r["action"] for r in L.list() if r["action"] == "examples"] == ["examples"]
+
+
+def test_nothing_is_proposed_unless_asked(plain_env):
+    root, L, m, task = plain_env
+    fm = ProposingFM([good], ["sub(5, 3) == 2"])
+    assert work_task(fm, L, m, task)["ok"] and fm.proposals == 0 and not list(root.glob("test_*_spec.py"))      # off by default
+
+
+def test_a_step_that_already_has_examples_keeps_them_and_asks_no_one(spec_env):
+    root, L, m, task = spec_env
+    fm = ProposingFM([only_code], ["sub(5, 3) == 99"])
+    assert work_task(fm, L, m, task, propose=True)["ok"] and fm.proposals == 0 and "99" not in (root / "test_calc_spec.py").read_text()
+
+
+def test_no_proposal_is_made_for_a_step_that_names_no_source_file(env):
+    root, L, m, _ = env
+    m.add_plan("x", [Task("Tidy things up", "no file named", kind="code")])
+    fm = ProposingFM([idle], ["f(1) == 1"])
+    work_task(fm, L, m, m.tasks()[1], propose=True, max_iterations=1)
+    assert fm.proposals == 0
+
+
+def test_unusable_proposals_fall_back_to_the_model_writing_its_own_tests(plain_env):
+    root, L, m, task = plain_env
+    fm = ProposingFM([good], ["__import__('os').system('touch pwned') == 0", "gibberish"])
+    out = work_task(fm, L, m, task, propose=True)
+    assert out["ok"] and fm.proposals == 1 and not list(root.glob("test_*_spec.py")) and not (root / "pwned").exists() and m.tasks()[1].done_when == ""
+
+
+def test_proposed_examples_that_do_not_match_what_the_step_asked_for_cannot_be_met_and_block_it(plain_env):
+    root, L, m, task = plain_env
+    fm = ProposingFM([only_code], ["sub(5, 3) == 99"])
+    out = work_task(fm, L, m, task, propose=True, max_iterations=2)
+    assert not out["ok"] and "edits rolled back" in out["summary"] and not (root / "test_calc_spec.py").exists()
+
+
+def test_a_step_that_is_not_in_memory_still_works_with_proposed_examples(env):
+    root, L, m, _ = env
+    stray = Task("Add sub() to calc.py", "Create sub(a, b) in calc.py", kind="code", id="9")
+    fm = ProposingFM([only_code], ["sub(5, 3) == 2"])
+    assert work_task(fm, L, m, stray, propose=True)["ok"] and (root / "test_calc_spec.py").exists()
+
+
 # ------------------------------------------------------------------ running out of room (the 7K budget)
 BUDGET_STOP = {"content": "", "stopped": True, "calls": [], "reason": "budget", "tokens": 7300, "estimated": 7200, "context": 8192}
 
