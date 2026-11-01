@@ -136,7 +136,7 @@ def test_research_that_merely_restates_the_task_is_dropped(env):
         t["add_actionable"](title="Write sub() in calc.py", detail="Add a sub function to calc.py", kind="code")               # code may mirror the task
         t["add_actionable"](title="Read the pytest docs", detail="how parametrize works", kind="research")                     # genuinely new
     r = research(FakeFM(script), L, m, "1")
-    assert (r["added"], r["dropped"]) == (2, 2) and [k.title for k in m.tasks()[0].children] == ["Write sub() in calc.py", "Read the pytest docs"]
+    assert (r["added"], r["dropped"]) == (2, 2) and [k.title for k in m.tasks()[0].children] == ["Add a sub function to calc.py", "Read the pytest docs"]   # the identifier title took its detail; the later calc.py step is a repeat
 
 
 def test_repeated_titles_are_added_once_even_across_research_passes(env):
@@ -327,3 +327,22 @@ def test_a_goal_never_gets_more_than_max_steps_so_the_next_goal_is_reached(env):
     script2 = lambda t: [t["add_actionable"](title=f"Write other{i}.py", kind="code") for i in range(5)]
     assert research(FakeFM(script2), L, m, "1")["added"] == 0
     assert [k.id for k in m.tasks()[0].children][-1] == f"1.{MAX_STEPS}"
+
+
+def test_an_identifier_title_is_replaced_by_the_steps_detail(env):
+    _, L, m = env
+    script = lambda t: [t["add_actionable"](title="write_slug", detail="write slugify(text) in slugs.py", kind="code"), t["add_actionable"](title="test_slug", kind="test")]
+    assert research(FakeFM(script), L, m, "1")["added"] == 1 and [k.title for k in m.tasks()[0].children] == ["write slugify(text) in slugs.py"]
+
+
+def test_a_step_naming_no_file_does_not_hide_later_steps_of_the_same_kind(env):
+    _, L, m = env
+    script = lambda t: [t["add_actionable"](title="Think about slugs", kind="code"), t["add_actionable"](title="Write slugify in slugs.py", kind="code")]
+    assert research(FakeFM(script), L, m, "1")["added"] == 2
+
+
+def test_a_step_that_only_researches_is_dropped_because_no_test_can_verify_it(env):
+    _, L, m = env
+    script = lambda t: [t["add_actionable"](title="Research slug rules", kind="code"), t["add_actionable"](title="Write slugify in slugs.py", kind="code")]
+    r = research(FakeFM(script), L, m, "1")
+    assert (r["added"], r["dropped"]) == (1, 1) and [k.title for k in m.tasks()[0].children] == ["Write slugify in slugs.py"]

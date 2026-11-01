@@ -15,7 +15,7 @@ from .verify import is_test_path
 READ_TOOLS = ("read_file", "list_files", "grep")   # no web: research is not part of the loop
 INSTRUCTIONS = ("You prepare work for a coding agent. Look at the project with the tools only if it has files. Then call add_actionable once for each "
                 "small step that must be done, in order (3 to 8 steps). Write each title as a short imperative phrase that names the file it changes. "
-                "Use kind=code to write or change code, kind=test to write tests for it. Do not repeat a step already listed under Next tasks. "
+                "Use kind=code to write or change code, kind=test to write tests for it. Plan no step that only researches or reads: every step writes code or tests. Do not repeat a step already listed under Next tasks. "
                 "Steps are things to build, not tools to call.")
 _TOOL_NAMES = {*READ_TOOLS, "add_actionable", "spawn_subagent", "run_tests", "run_command", "replace_text", "insert_after", "create_file", "delete_file"}
 MAX_STEPS = 12         # steps one goal may have: the list grows 1.1, 1.2, ... and stops, so it never crowds out the next goal
@@ -45,7 +45,7 @@ def _work(item):
 
 def _repeats(item, done):
     kind, files = _work(item)
-    return bool(files) and any(k == kind and (files <= f or f <= files) for k, f in done)   # the same files, or some of them, for the same kind of work
+    return bool(files) and any(k == kind and f and (files <= f or f <= files) for k, f in done)   # the same files, or some of them, for the same kind of work
 
 
 def research(fm, ledger, memory, task_id, web=None, spawn=None, max_tool_calls=8):
@@ -83,8 +83,8 @@ def research(fm, ledger, memory, task_id, web=None, spawn=None, max_tool_calls=8
         done = [w for w in map(_work, _walk(memory.tasks())) if w[1]]
         kept = []
         for t in found:                     # each title once in the whole plan, no kind of work on the same files twice in the whole plan
-            t.title = _tidy_title(t.title, files)
-            if not _junk_title(t.title) and t.title.casefold() not in seen and not _repeats(t, done):
+            t.title = t.detail if _junk_title(t.title) and t.detail else _tidy_title(t.title, files)   # 'write_slug' says nothing, its detail does
+            if not _junk_title(t.title) and not t.title.casefold().startswith("research") and t.title.casefold() not in seen and not _repeats(t, done):
                 kept.append(t)
                 seen.add(t.title.casefold())
                 done.append(_work(t))
