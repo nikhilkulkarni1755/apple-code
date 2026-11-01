@@ -38,6 +38,20 @@ def test_every_record_carries_agent_task_kind_and_element(env):
     assert (observed["element"], observed["agent"], observed["task_id"], observed["cause"] is not None) == ("out.txt", "a1", "1.3", True)
 
 
+def test_iterations_are_recorded_and_can_be_undone_one_at_a_time(env):
+    root, L, t = env
+    for it, (old, new) in enumerate([("x = 1", "x = 2"), ("x = 2", "x = 3")], 1):
+        with L.scope(agent="a1", task="7", kind="code", iteration=it):
+            t["replace_text"](path="a.py", old=old, new=new)
+    assert [(r["iteration"], r["task_id"]) for r in L.edits("a1", "7")] == [(1, "7"), (2, "7")]
+    assert [r["iteration"] for r in L.edits("a1", "7", 2)] == [2] and L.edits("a1", "7", 3) == [] and L.edits("a2", "7") == []
+    L.undo_task("a1", "7", iteration=2)
+    assert (root / "a.py").read_text() == "import os\nx = 2\n" and [r["iteration"] for r in L.edits("a1", "7")] == [1]
+    with L.scope(iteration=0):
+        assert L._scope["iteration"] == 0                         # attempt 0 is a real value, not "unset"
+    assert L._scope["iteration"] is None
+
+
 def test_default_attribution_is_the_root_agent_with_no_task(env):
     _, L, t = env
     t["read_file"](path="a.py")
@@ -60,7 +74,7 @@ def test_scope_is_restored_even_when_the_block_raises(env):
     with pytest.raises(RuntimeError):
         with L.scope(agent="a9", task="9"):
             raise RuntimeError
-    assert L._scope == {"agent": "root", "task_id": None, "kind": None}
+    assert L._scope == {"agent": "root", "task_id": None, "kind": None, "iteration": None}
 
 
 def test_rejected_calls_are_logged_too_with_their_error(env):
@@ -129,7 +143,7 @@ def test_ledgers_created_before_attribution_are_migrated(tmp_path):
     root = tmp_path / "old"
     (root / ".agent").mkdir(parents=True)
     db = sqlite3.connect(root / ".agent" / "ledger.db")
-    db.execute(_SCHEMA.replace(",\n    agent TEXT, task_id TEXT, kind TEXT, element TEXT)", ")"))   # the schema before attribution existed
+    db.execute(_SCHEMA.replace(",\n    agent TEXT, task_id TEXT, kind TEXT, element TEXT, iteration INTEGER)", ")"))   # the schema before attribution existed
     db.execute("INSERT INTO actions(ts, action, args, status) VALUES (1, 'old_action', '{}', 'ok')")
     db.commit()
     db.close()

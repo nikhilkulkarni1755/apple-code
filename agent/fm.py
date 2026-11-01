@@ -1,10 +1,10 @@
-"""Python client for the Swift helper (helper/main.swift): one model session per `run` call."""
+"""Python client for the Swift helper (agent/helper/main.swift): one model session per `run` call."""
 import json
 import subprocess
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-HELPER = Path(__file__).resolve().parent.parent / "helper" / "fm-helper"
+HELPER = Path(__file__).resolve().parent / "helper" / "fm-helper"   # built by build.sh, or by the installer
 
 
 @dataclass
@@ -34,6 +34,11 @@ class FM:
             return json.loads(line)
         except ValueError:
             raise RuntimeError(f"fm helper sent invalid output: {line[:100]!r}") from None
+
+    def status(self):
+        """Whether the on-device model can be used: 'available', or the reason it cannot."""
+        self._send({"cmd": "status"})
+        return self._read()["availability"]
 
     def count(self, tools=(), instructions="", prompt=""):
         """Exact token counts: {'tools': n, 'instructions': n, 'prompt': n}."""

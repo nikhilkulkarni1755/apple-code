@@ -235,3 +235,13 @@ def test_invalid_task_fields_are_coerced_safely(mem):
     m.add_plan("goal", [Task("ok", detail=5, done_when=None, status="weird", children=[Task("kid", status="done"), "junk"])])
     t = m.tasks()[0]
     assert (t.detail, t.done_when, t.status) == ("", "", "done") and [c.title for c in t.children] == ["kid"]
+
+
+def test_the_state_line_does_not_claim_everything_is_done_while_tasks_are_blocked(mem):
+    _, _, m = mem
+    m.add_plan("goal", [Task("a"), Task("b")])
+    m.complete("1", "ok")
+    m.mark("2", "blocked")
+    assert m.get("Current state") == "1/2 tasks done. Nothing left to do; 1 blocked." and m.next_task() is None
+    m.mark("2", "done")
+    assert m.get("Current state") == "2/2 tasks done. All tasks done."

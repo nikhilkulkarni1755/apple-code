@@ -4,4 +4,9 @@
 .agent/
 __pycache__/
 .pytest_cache/
-helper/fm-helper
+agent/helper/fm-helper
+dist/
+*.egg-info/
+build/
+npm/payload/
+node_modules/

@@ -75,8 +75,12 @@ def pytest_summary(output):
     return {}
 
 
+def test_python(root):
+    """The interpreter tests run with: the workspace's .venv if it has one, otherwise the agent's own."""
+    venv_python = root / ".venv" / "bin" / "python"
+    return str(venv_python if venv_python.exists() else sys.executable)
+
+
 def run_tests(ledger, args="", timeout=300):
     """Run pytest with the workspace's venv python if it has one. Returns the ledger seq of the run."""
-    venv_python = ledger.root / ".venv" / "bin" / "python"
-    py = venv_python if venv_python.exists() else sys.executable
-    return ledger.run_command(f"{shlex.quote(str(py))} -m pytest -q {args}", timeout)
+    return ledger.run_command(f"{shlex.quote(test_python(ledger.root))} -m pytest -q {args}", timeout)

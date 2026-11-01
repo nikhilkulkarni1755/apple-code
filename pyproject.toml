@@ -1,9 +1,27 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
 [project]
-name = "agent"
-version = "0.0.0"
+name = "apple-code"
+dynamic = ["version"]
+description = "A local coding agent for Apple's on-device Foundation Model"
 requires-python = ">=3.12"
+dependencies = ["pytest>=8"]
+
+[project.scripts]
+apple-code = "agent.__main__:main"
+
+[tool.setuptools]
+packages = ["agent"]
+
+[tool.setuptools.dynamic]
+version = {attr = "agent.__version__"}
+
+[tool.setuptools.package-data]
+agent = ["helper/main.swift"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
 addopts = "-m 'not fm and not net'"
-markers = ["fm: needs the on-device model and helper/fm-helper (run with: pytest -m fm)", "net: needs internet access (run with: pytest -m net)"]
+markers = ["fm: needs the on-device model and the built helper (run with: pytest -m fm)", "net: needs internet access and builds a real install (run with: pytest -m net)"]

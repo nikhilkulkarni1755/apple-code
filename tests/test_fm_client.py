@@ -106,7 +106,7 @@ def test_count_and_tool_specs_never_leak_handlers(fake):
 
 
 # ---------------------------------------------------------------- real model (run with: pytest -m fm)
-real = pytest.mark.skipif(not HELPER.exists(), reason="build the helper: swiftc -O helper/main.swift -o helper/fm-helper")
+real = pytest.mark.skipif(not HELPER.exists(), reason="build the helper: ./build.sh")
 
 
 @pytest.fixture(scope="module")

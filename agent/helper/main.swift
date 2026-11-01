@@ -3,7 +3,8 @@
 //    "max_tool_calls":8,"temperature":0.2}
 //     -> {"event":"tool_call","id":1,"name":"..","args":{..}}   (reply on stdin: {"id":1,"result":".."})
 //     -> {"event":"done","content":"..","stopped":false} | {"event":"error","kind":"context_overflow|guardrail|other","message":".."}
-//   {"cmd":"count","instructions":"..","prompt":"..","tools":[..]} -> {"event":"count","tools":N,"instructions":N,"prompt":N}
+//   {"cmd":"status"} -> {"event":"status","availability":"available" or the reason the model cannot be used}
+//   {"cmd":"count","instructions":"..","prompt":"..","tools":[..]} -> {"event":"count","tools":N,"instructions":N,"prompt":N,"context":N}
 import Foundation
 import FoundationModels
 
@@ -71,6 +72,10 @@ func handle(_ req: [String: Any]) async {
     let model = SystemLanguageModel.default
     let instructions = req["instructions"] as? String ?? ""
     let prompt = req["prompt"] as? String ?? ""
+    if req["cmd"] as? String == "status" {
+        emit(["event": "status", "availability": "\(model.availability)"])
+        return
+    }
     let bridge = Bridge(maxCalls: req["max_tool_calls"] as? Int ?? 8)
     do {
         let tools = try makeTools(req["tools"] as? [[String: Any]] ?? [], bridge: bridge)
@@ -78,7 +83,8 @@ func handle(_ req: [String: Any]) async {
             emit(["event": "count",
                   "tools": try await model.tokenCount(for: tools as [any Tool]),
                   "instructions": try await model.tokenCount(for: Instructions(instructions)),
-                  "prompt": try await model.tokenCount(for: prompt)])
+                  "prompt": try await model.tokenCount(for: prompt),
+                  "context": model.contextSize])
             return
         }
         let session = LanguageModelSession(model: model, tools: tools, instructions: instructions)

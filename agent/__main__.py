@@ -1,8 +1,11 @@
-"""Drive the ledger without a model: python -m agent <command>."""
+"""The apple-code command line."""
 import argparse
 import json
+import subprocess
 import sys
+from pathlib import Path
 
+from . import __version__
 from .agents import AgentQueue
 from .ledger import ActionError, Ledger
 from .runner import run_tests
@@ -14,9 +17,19 @@ def _show(r):
           + (f" (by command #{r['cause']})" if r["cause"] else "") + (f" exit={r['exit_code']}" if r["action"] == "run_command" and r["status"] == "ok" else "") + (f"  {r['error']}" if r["error"] else ""))
 
 
+def _installer():
+    """The install.sh the installer left next to the program, or None when running from a source checkout."""
+    path = Path(sys.prefix).parent / "install.sh"
+    return path if path.is_file() and (path.parent / ".apple-code-home").exists() else None
+
+
 def main(argv=None):
-    ap = argparse.ArgumentParser(prog="agent")
+    ap = argparse.ArgumentParser(prog="apple-code", description="A local coding agent for Apple's on-device model. Run it inside a project folder.")
+    ap.add_argument("--version", action="version", version=f"apple-code {__version__}")
     sub = ap.add_subparsers(dest="cmd", required=True)
+    sub.add_parser("doctor", help="check that this machine can run apple-code")
+    sub.add_parser("update", help="install the latest version")
+    sub.add_parser("uninstall", help="remove apple-code (your projects are left alone)")
     d = sub.add_parser("do", help="apply one action: do ACTION JSON_ARGS")
     d.add_argument("action")
     d.add_argument("args")
@@ -29,6 +42,8 @@ def main(argv=None):
     df = sub.add_parser("diff", help="compare two recorded command runs")
     df.add_argument("a", type=int)
     df.add_argument("b", type=int)
+    sv = sub.add_parser("solve", help="research a goal, plan it, and carry out the code tasks with the on-device model")
+    sv.add_argument("goal")
     sub.add_parser("agents", help="list agents and their state")
     tr = sub.add_parser("trail", help="everything done under a task (and the tasks nested below it)")
     tr.add_argument("task")
@@ -42,6 +57,15 @@ def main(argv=None):
     sub.add_parser("redo")
     sub.add_parser("verify")
     a = ap.parse_args(argv)
+    if a.cmd == "doctor":
+        from .doctor import report
+        return report()
+    if a.cmd in ("update", "uninstall"):
+        installer = _installer()
+        if installer is None:
+            print(f"apple-code was not installed by the installer; {a.cmd} does not apply to a source checkout.", file=sys.stderr)
+            return 1
+        return subprocess.run(["sh", str(installer), "--home", str(installer.parent)] + (["--uninstall"] if a.cmd == "uninstall" else [])).returncode
     ledger = Ledger(".")
     try:
         if a.cmd == "do":
@@ -50,6 +74,22 @@ def main(argv=None):
             seq = {"run": lambda: ledger.run_command(a.command), "test": lambda: run_tests(ledger, a.args),
                    "replay": lambda: ledger.replay(a.seq)}[a.cmd]()
             print(f"#{seq} exit={ledger.get(seq)['exit_code']}")
+        elif a.cmd == "solve":
+            from .agents import task_runner
+            from .fm import FM
+            from .memory import Memory
+            from .web import Web
+            from .worker import solve_step
+            fm = FM()
+            try:
+                say = lambda text: print(text, flush=True)
+                queue = AgentQueue(ledger, task_runner(solve_step(fm, Web(), say), say=say))
+                queue.start(a.goal)
+                for r in queue.run():
+                    print(f"{r['id']:5s} {r['status']:8s} {r['summary'] or r['error'] or ''}")
+                print(Memory(ledger).get("Current state"))
+            finally:
+                fm.close()
         elif a.cmd == "agents":
             for r in AgentQueue(ledger, None, resume=False).agents():
                 print(f"{r['id']:5s} {r['status']:8s} tries={r['attempts']} parent={r['parent'] or '-':5s} {r['goal'][:70]}")

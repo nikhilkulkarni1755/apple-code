@@ -28,7 +28,7 @@ _SCHEMA = """CREATE TABLE IF NOT EXISTS actions (
     path TEXT, pre_hash TEXT, post_hash TEXT, start_line INTEGER, removed TEXT, added TEXT,
     inverse TEXT, reverts INTEGER, reverted_by INTEGER, depth INTEGER,
     cause INTEGER, replay_of INTEGER, exit_code INTEGER, output TEXT, duration REAL,
-    agent TEXT, task_id TEXT, kind TEXT, element TEXT)"""
+    agent TEXT, task_id TEXT, kind TEXT, element TEXT, iteration INTEGER)"""
 _SKIP_DIRS = {".agent", ".git", ".venv", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache", "node_modules"}
 _MAX_BYTES = 1_000_000
 _JUNK_FILES = {".DS_Store"}   # macOS Finder metadata: never tracked, never part of a build
@@ -129,10 +129,10 @@ class Ledger:
         self.db.row_factory = sqlite3.Row
         self.db.execute(_SCHEMA)
         have = {r[1] for r in self.db.execute("PRAGMA table_info(actions)")}
-        for col in ("agent", "task_id", "kind", "element"):   # ledgers created before attribution existed
-            if col not in have:
-                self.db.execute(f"ALTER TABLE actions ADD COLUMN {col} TEXT")
-        self._scope = {"agent": "root", "task_id": None, "kind": None}
+        for col, type_ in (("agent", "TEXT"), ("task_id", "TEXT"), ("kind", "TEXT"), ("element", "TEXT"), ("iteration", "INTEGER")):
+            if col not in have:   # ledgers created before this column existed
+                self.db.execute(f"ALTER TABLE actions ADD COLUMN {col} {type_}")
+        self._scope = {"agent": "root", "task_id": None, "kind": None, "iteration": None}
         self._recover()
 
     # ---- file helpers ----
@@ -189,10 +189,11 @@ class Ledger:
 
     # ---- db helpers ----
     @contextmanager
-    def scope(self, agent=None, task=None, kind=None):
-        """Everything recorded inside is attributed to this agent, task (e.g. '1.2') and kind (e.g. 'research')."""
+    def scope(self, agent=None, task=None, kind=None, iteration=None):
+        """Everything recorded inside is attributed to this agent, task (e.g. '1.2'), kind (e.g. 'research') and attempt number."""
         old = self._scope
-        self._scope = {"agent": agent or old["agent"], "task_id": task or old["task_id"], "kind": kind or old["kind"]}
+        self._scope = {"agent": agent or old["agent"], "task_id": task or old["task_id"], "kind": kind or old["kind"],
+                       "iteration": old["iteration"] if iteration is None else iteration}
         try:
             yield
         finally:
@@ -247,11 +248,15 @@ class Ledger:
         sql = "SELECT * FROM actions WHERE (task_id = ? OR task_id LIKE ?)" + (" AND agent = ?" if agent else "") + " ORDER BY seq"
         return self.db.execute(sql, (task, f"{task}.%", *([agent] if agent else []))).fetchall()
 
-    def undo_task(self, agent, task):
-        """Undo the edits still in force that were made by `agent` while working on exactly `task`, newest first."""
-        rows = self.db.execute("SELECT seq FROM actions WHERE status='ok' AND reverted_by IS NULL AND depth % 2 = 0 AND agent = ? AND task_id = ? "
-                               "ORDER BY seq DESC", (agent, task)).fetchall()
-        return [self.undo(r["seq"]) for r in rows]
+    def edits(self, agent, task, iteration=None):
+        """File edits still in force that `agent` made on exactly `task` (during one attempt, if given), oldest first."""
+        sql = ("SELECT * FROM actions WHERE status='ok' AND reverted_by IS NULL AND depth = 0 AND path IS NOT NULL AND agent = ? AND task_id = ?"
+               + (" AND iteration = ?" if iteration is not None else "") + " ORDER BY seq")
+        return self.db.execute(sql, (agent, task, *([iteration] if iteration is not None else []))).fetchall()
+
+    def undo_task(self, agent, task, iteration=None):
+        """Undo the edits still in force that `agent` made on exactly `task` (in one attempt, if given), newest first."""
+        return [self.undo(r["seq"]) for r in reversed(self.edits(agent, task, iteration))]
 
     # ---- actions ----
     def _prepare(self, action, args, expect_pre):

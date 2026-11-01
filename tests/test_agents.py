@@ -116,12 +116,44 @@ def test_each_agent_has_its_own_memory_that_inherits_the_parents_design(ws):
     assert "write the parser" not in (root / ".agents" / "a2" / "MEMORY.md").read_text()      # no bleed between agents
 
 
-def test_start_makes_research_the_first_task_of_any_goal_and_is_idempotent(ws):
+def test_start_makes_research_the_first_task_of_any_goal_and_the_same_goal_changes_nothing(ws):
     _, L = ws
     q = AgentQueue(L, lambda ctx: None)
-    assert q.start("Create an operating system") == "root" and q.start("something else") == "root"
+    assert q.start("Create an operating system") == "root" and q.start("Create  an operating\nsystem") == "root"
     tasks = q.memory("root").tasks()
     assert len(tasks) == 1 and tasks[0].kind == "research" and tasks[0].title.startswith("Research: Create an operating system")
+
+
+def test_a_new_goal_on_an_existing_project_is_added_and_wakes_the_root_agent(ws):
+    root, L = ws
+    ran = []
+    q = AgentQueue(L, task_runner(lambda ctx, task: ran.append(task.title) or {"ok": True, "summary": "x"}))
+    q.start("Build the parser")
+    q.run()
+    assert status(q) == {"root": "done"} and ran == ["Research: Build the parser"]
+    q.start("Build the parser")                                    # same goal again: nothing to do
+    q.run()
+    assert ran == ["Research: Build the parser"]
+    q2 = AgentQueue(Ledger(root), task_runner(lambda ctx, task: ran.append(task.title) or {"ok": True, "summary": "x"}))   # a later session
+    q2.start("Add a command line")                                  # a different goal: queued behind the finished work
+    assert status(q2) == {"root": "queued"} and q2.get("root")["attempts"] == 0
+    q2.run()
+    assert ran[-1] == "Research: Add a command line" and len(ran) == 2 and status(q2) == {"root": "done"}
+    mem = q2.memory("root")
+    assert [t.id for t in mem.tasks()] == ["1", "2"] and "Build the parser" in mem.get("Goals") and "Add a command line" in mem.get("Goals")
+
+
+def test_a_blocked_goal_does_not_stop_the_next_one(ws):
+    _, L = ws
+    step = lambda ctx, task: {"ok": "first" not in task.title, "summary": "x"}
+    q = AgentQueue(L, task_runner(step))
+    q.start("first goal")
+    q.run()
+    assert status(q) == {"root": "blocked"}
+    q.start("second goal")
+    q.run()
+    kinds = {t.title.split(": ")[1]: t.status for t in q.memory("root").tasks()}
+    assert kinds == {"first goal": "blocked", "second goal": "done"}
 
 
 # ------------------------------------------------------------------ running

@@ -4,7 +4,7 @@ import time
 from dataclasses import dataclass
 
 from .ledger import ActionError
-from .memory import Memory, Task
+from .memory import Memory, Task, clean
 
 MAX_CHILDREN = 3      # subagents one agent may spawn
 MAX_SUBAGENTS = 15    # subagents ever created in this workspace (the root agent is not counted)
@@ -73,11 +73,21 @@ class AgentQueue:
         return agent_id
 
     def start(self, goal):
-        """Create the root agent for `goal` (its first task is always to research it). Safe to call again after a restart."""
+        """Give the root agent a goal; its first task is always to research it. Safe to call again after a restart (the same goal
+        changes nothing); a new goal on an existing project is added to the same MEMORY.md and wakes the root agent."""
         if not isinstance(goal, str) or not goal.strip():
             raise ActionError("goal must be a non-empty string")
-        exists = self.ledger.db.execute("SELECT 1 FROM agents WHERE id=?", (ROOT,)).fetchone()
-        return ROOT if exists else self._create(ROOT, None, goal, "MEMORY.md")
+        row = self.ledger.db.execute("SELECT status FROM agents WHERE id=?", (ROOT,)).fetchone()
+        if row is None:
+            return self._create(ROOT, None, goal, "MEMORY.md")
+        memory = self.memory(ROOT)
+        if clean(goal, 300) not in memory.get("Goals"):
+            with self.ledger.scope(agent=ROOT):
+                text = " ".join(goal.split())[:500]
+                memory.add_plan(text, [Task(f"Research: {text[:60]}", text, kind="research")])
+            if row["status"] in ("done", "blocked", "failed"):
+                self._set(ROOT, status="queued", attempts=0, error=None)
+        return ROOT
 
     def spawn(self, parent, goal):
         """Queue a new subagent under `parent`. Refused beyond 3 per agent or 15 in total."""
@@ -131,10 +141,11 @@ class AgentQueue:
             self._run_one(row)
 
 
-def task_runner(step, undo_partial=True):
+def task_runner(step, undo_partial=True, say=None):
     """Work through the agent's own task plan one task at a time. A task's completion is written to the agent's MEMORY.md
     (through the ledger) before the next task starts; a task found 'doing' was interrupted, and its partial edits are undone first.
-    `step(ctx, task)` returns {'ok': bool, 'summary': str, 'evidence': str}."""
+    `step(ctx, task)` returns {'ok': bool, 'summary': str, 'evidence': str}. `say(text)` is told about each task as it starts and ends."""
+    say = say or (lambda text: None)
 
     def run(ctx):
         blocked = 0
@@ -143,7 +154,9 @@ def task_runner(step, undo_partial=True):
                 if task.status == "doing" and undo_partial:
                     ctx.ledger.undo_task(ctx.id, task.id)
                 ctx.memory.mark(task.id, "doing")
+                say(f"task {task.id} [{task.kind or '-'}] {task.title}")
                 outcome = step(ctx, task) or {}
+                say(f"  -> {'done' if outcome.get('ok') else 'BLOCKED'}: {outcome.get('summary', '')}")
                 if outcome.get("ok"):
                     ctx.memory.complete(task.id, outcome.get("summary", "done"), outcome.get("evidence"))
                 else:

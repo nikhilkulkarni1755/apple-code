@@ -210,8 +210,9 @@ class Memory:
             secs["Last task completed"] = self._body("Last task completed", last)
         leaves = [t for t in _walk(plan) if not t.children]
         nxt = next((t for t in leaves if t.status in ("todo", "doing")), None)
+        blocked = sum(t.status == "blocked" for t in leaves)
         secs["Current state"] = self._body("Current state", f"{sum(t.status == 'done' for t in leaves)}/{len(leaves)} tasks done. "
-                                           + (f"Next: {nxt.id} {nxt.title}" if nxt else "All tasks done."))
+                                           + (f"Next: {nxt.id} {nxt.title}" if nxt else f"Nothing left to do; {blocked} blocked." if blocked else "All tasks done."))
         return self._save(pre, secs)
 
     def next_task(self):

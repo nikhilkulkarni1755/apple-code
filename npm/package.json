@@ -1,0 +1,12 @@
+{
+  "name": "apple-code",
+  "version": "0.1.0",
+  "description": "A local coding agent for Apple's on-device Foundation Model",
+  "bin": { "apple-code": "bin/apple-code.js" },
+  "files": ["bin", "payload", "README.md"],
+  "os": ["darwin"],
+  "cpu": ["arm64"],
+  "engines": { "node": ">=18" },
+  "repository": { "type": "git", "url": "git+https://github.com/nikhilkulkarni1755/apple-code.git" },
+  "keywords": ["coding-agent", "apple-intelligence", "foundation-models", "local-llm"]
+}

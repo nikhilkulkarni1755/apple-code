@@ -152,7 +152,7 @@ The loop lives in orchestrator code, not as a model-callable tool, so nested con
    - Only utf-8 text files up to 1MB are tracked. Binary and larger files, and `.agent`, `.git`, `.venv`, `__pycache__`, `.pytest_cache`, `.mypy_cache`, `.ruff_cache` and `node_modules`, are ignored, so a command that changes those is not undoable.
    - Commands themselves cannot be undone. A command row left unfinished by a crash is marked `error` on startup, and its file changes may be incompletely recorded.
    - `run_tests` uses the workspace's `.venv/bin/python` if present, otherwise the current interpreter.
-3. **Single-task worker loop** with the harness verifier, FM wired to the tools. *In progress:* the Swift helper (`helper/main.swift`, build with `swiftc -O helper/main.swift -o helper/fm-helper`), the Python client (`agent/fm.py`), the tool registry (`agent/tools.py`) the measurements (§12), the hardening work (§13), MEMORY.md plus the task decomposer (§14), and research, subagents and restarts (§16) are done and tested (699 tests); the worker loop, the harness verifier, and feeding `MEMORY.md` context into each worker prompt are next. Exit: "make this failing test pass" succeeds, and §6 cases have tests.
+3. **Single-task worker loop** with the harness verifier, FM wired to the tools. *In progress:* the Swift helper (`agent/helper/main.swift`, build with `./build.sh`), the Python client (`agent/fm.py`), the tool registry (`agent/tools.py`) the measurements (§12), the hardening work (§13), MEMORY.md plus the task decomposer (§14), research, subagents and restarts (§16), and the worker loop with the harness verifier (§17) are done and tested (784 tests). Exit: "make this failing test pass" succeeds, and §6 cases have tests.
 4. **Planner and multi-task orchestrator.** Exit: a small goal runs end to end, or stalls with a clear reason.
 5. **Memory and web search.**
 6. **Eval set and hardening.** 10–20 scripted tasks; measure pass rate and iterations per task; tune prompts.
@@ -266,3 +266,51 @@ Why the line tools failed: the model is off by one or two lines, and when asked 
 **How much work was #1?** About 450 new lines in four modules (research, web, agents, attribution in the ledger) and about 1,000 lines of tests. The part that is not built is the part that makes the code actionables happen: the worker loop and verifier (Milestone 3).
 
 **Test counts.** 699 tests run by default (`pytest`), plus 5 that need the real model or the network (`pytest -m "fm or net"`), and 3 expected failures that document known gaps.
+
+## 17. Worker loop and harness verifier (Milestone 3 complete)
+
+**Entry point.** `python -m agent solve "goal"` runs: root agent -> research the goal (§16) -> code actionables become tasks -> each code task goes through `work_task` -> the harness verifies. `python -m agent trail 1.1` then shows everything done under a task.
+
+**Worker loop** (`agent/worker.py`). For one code task: run the tests once before any work (the "red" run); then up to 4 attempts. Each attempt is a fresh model session with 7 tools (read_file, list_files, grep, create_file, replace_text, insert_after, run_tests; `delete_file` only if the task text says delete or remove; web tools if given), at most 12 tool calls, and a prompt made of: the task, the files, the `MEMORY.md` notes, and a short summary of the last failure. The prompt is measured with the helper's exact token count against the real `contextSize` (reserving 2,500 tokens for tool results); if it does not fit, the notes and file list are dropped, then the failure text is cut. After a context overflow the next prompt starts without notes. After an attempt the harness, not the model, decides:
+1. Protected tests: each existing test file is compared with how it was before the task. It may not be deleted, and every original line (imports and blank lines aside) must still be present. A violation undoes that attempt's edits and tells the model why.
+2. Files deleted that the task never names: undone the same way.
+3. Syntax check of every Python file touched; errors are reported with file and line, and the tests are not run.
+4. The tests run (recorded in the ledger as `kind=test`, with the same attempt number as the edits). Evidence required: pytest exit 0, at least one test passed, none skipped, xfailed or unexpectedly deselected, files really changed for this task, and **more tests passing than before the task**.
+5. The frozen run: the original test files, as they were before the task, run against the code as it is now, in a scratch copy of the project. This catches a test weakened by an inserted `return` or a skip, and a test edited to match broken code.
+Each attempt leaves a `verify` record (ok, or rejected with the reasons). Two attempts in a row that change nothing and fail the same way stop the task early. If the task is not verified, its edits are rolled back so a failed attempt cannot poison later tasks (`redo` brings them back). A task is only ever marked done with `evidence: run #N: pytest exit 0, K passed` in `MEMORY.md`.
+
+**The "done when" text** is prose written by a model, so only genuine pytest arguments are taken from it (flags, their values, file paths and node ids); everything else, including `; rm -rf /` or `$(...)`, is dropped and the full suite runs.
+
+**Two flaws in my first verifier, found by running the real model:**
+- A false acceptance. The model put its new test function into `calc.py`, where pytest never looks; the old test still passed and the task was "verified". Fixed by requiring the passing count to rise.
+- A false rejection. The model retyped the existing `test_add` while adding a new test, and the per-edit rule saw "removed lines". Fixed by comparing whole-file state instead of edits, which also lets the model remove what it added itself.
+
+**Measured on the real model** (add a subtract function with a test to a 2-file project; `experiments/run_solve.py`), 3 runs. Run 1: research produced nothing usable (7 s), nothing attempted. Run 2: 8 attempts over 2 tasks, every one rejected (new test in the wrong file, existing test rewritten, no new passing test); the project was left clean. Run 3: verified on the first attempt, 2 tests passing, 16 s. So about 1 in 3 end to end; the model is the weak part, not the harness. A test against the real model (`pytest -m fm`) asserts what must always hold: if the agent says done, the tests really pass and have increased in number; otherwise nothing is left behind and the original tests are intact.
+
+**Known limits.** The evidence is tests: a refactor that adds no test is reported as not verified. The frozen run needs the project's test fixtures to be copyable (the whole project is copied, except venvs and caches). Verification trusts pytest itself; code that special-cases the test inputs would pass. The worker only knows pytest. Near-duplicate tasks from research waste attempts.
+
+**Still open:** the eval set, to turn "about 1 in 3" into a measured pass rate over 10 to 20 tasks, and tuning the prompts with it; plan mode; the Apple container executor; parallel agents.
+
+## 18. Installing it: curl, npx, or a zip (global, like Claude Code or opencode)
+
+**Result.** One command, `apple-code`, available from any folder. Three ways to get it, all running the same `install.sh`:
+- `curl -fsSL https://raw.githubusercontent.com/nikhilkulkarni1755/apple-code/main/install.sh | sh`
+- `npx apple-code install` (or `npm install -g apple-code`): the npm package bundles the source and calls the same script, so it needs no download beyond Python's `pytest`.
+- the zip: unzip, then `sh install.sh` (or right-click `Install.command`). A script run from an unpacked release installs that release, not something fetched from GitHub.
+
+**Layout.** `~/.apple-code/` holds a private venv (with `apple-code` and `pytest`), the helper built from source for this Mac, `VERSION`, a copy of `install.sh`, and a marker file. `~/.local/bin/apple-code` is a three-line launcher (the same place Claude Code uses). If that folder is not on `PATH`, one marked line is appended to `~/.zshrc` (or the bash profile); `--no-modify-path` skips it. Options: `--from`, `--home`, `--prefix`, `--no-modify-path`, `--uninstall`.
+
+**Commands added:** `apple-code --version`, `doctor` (macOS 26+, Apple silicon, Python, pytest, the model helper, and whether the on-device model is available), `update` (re-runs the saved installer), `uninstall`. They run before any `.agent/` folder is created, so they leave no files behind in the folder you run them from.
+
+**Safety rules (each has a test).** `--uninstall` deletes `~/.apple-code` only if it contains the installer's marker file, removes the launcher only if it carries the installer's marker, and removes only the marked `PATH` line, leaving the rest of the shell file as it was (a file with no final newline gets one). The installer refuses to use a non-empty folder it did not create, or to overwrite another program called `apple-code`. It builds from a clean copy of the source, so nothing is written into the folder it was run from (an unzipped download stays as it was). It never installs other software: it needs Python 3.12+ or `uv`, and Apple's command line tools, and says exactly what to run if either is missing.
+
+**Bugs the install tests found.**
+- `python -m agent` puts the current folder first on the import path, so a project with its own `agent/` package would have shadowed apple-code, and the installer itself built the model helper into the source checkout instead of the installed copy. Python now runs in isolated mode (`-I`) in the launcher, the npm shim and the installer, and a test runs the installed command from a project that contains a booby-trapped `agent/` folder.
+- Uninstall left a blank line in `.zshrc`; the installer now appends exactly one line.
+- Run from a pipe, the installer could not copy itself for later `update` and `uninstall`; it now copies the script from the source it installed.
+
+**Release.** `scripts/make-dist.sh` builds `dist/apple-code-<version>.tar.gz`, `.zip`, the npm `.tgz` and `SHA256SUMS`, containing only the package and its Swift source (no tests, caches, or the machine-specific compiled helper), and refuses to build if the Python and npm versions differ. The version lives in `agent/__init__.py`.
+
+**What has and has not been verified.** Verified on this Mac with a temporary home folder: install from a folder, from the zip, from the tarball through a real `curl … | sh -s --` pipe against a local web server, and through `npm exec` from the packed tarball; reinstall over the top; uninstall; and that the installed command works from an unrelated folder (`pytest -m net`, 8 tests). Not verified, because it needs publishing: the GitHub raw and archive URLs (the public repository does not yet contain this code) and the npm registry (`npm publish` needs your account). The installer needs the internet only to fetch `pytest` (and Python, if you use `uv` without one installed).
+
+**Not covered.** Windows and Linux (the model is Apple-only). A prebuilt, signed helper binary, which would remove the need for Apple's command line tools: it needs a release asset and a Developer ID signature. Checksum verification inside `install.sh` (the checksums are published, but the script does not check them yet).
