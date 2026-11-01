@@ -15,8 +15,9 @@ curl -fsSL https://raw.githubusercontent.com/nikhilkulkarni1755/apple-code/main/
 # 2. npm / npx
 npx apple-code install        # or: npm install -g apple-code
 
-# 3. zip: download apple-code-<version>.zip from the releases page, unzip it, then in Terminal:
-sh install.sh                 # (or right-click Install.command > Open)
+# 3. zip: on the GitHub page use Code > Download ZIP (or the apple-code-<version>.zip from the releases page),
+#    unzip it, then in Terminal, inside the unzipped folder:
+sh install.sh                 # (the release zip also has Install.command: right-click > Open)
 ```
 
 The installer puts a private Python environment in `~/.apple-code` and one launcher in `~/.local/bin`, and adds `~/.local/bin` to your `PATH` if needed (pass `--no-modify-path` to skip that). Check it with `apple-code doctor`.
