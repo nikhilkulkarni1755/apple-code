@@ -32,3 +32,7 @@ What the transcripts show:
 5. **Titles can name the wrong file.** P3's step was titled `tokenize.py` (the goal says `tokens.py`); a file called `tokenize.py` also shadows the standard library module.
 
 Planned edits for the next cycle (one PR each): (C) regenerate the evidence on every attempt and include files the failure names; (B) plan hygiene: drop `file: research ...` steps and test steps that name no file; (A) a "plan the rest of the goal" step at the end of the list that plans again, flat, once the earlier steps are done (at most 2 times).
+
+### Edits made after the first P2/P3 runs
+- **C (PR #3):** a retry re-gathers the evidence, including the contents of files the failure text names.
+- **B (plan hygiene):** a step is dropped if its title is `research ...` or `file.py: research ...`, or if it is a test step that names no file.

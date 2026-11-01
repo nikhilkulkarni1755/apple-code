@@ -346,3 +346,11 @@ def test_a_step_that_only_researches_is_dropped_because_no_test_can_verify_it(en
     script = lambda t: [t["add_actionable"](title="Research slug rules", kind="code"), t["add_actionable"](title="Write slugify in slugs.py", kind="code")]
     r = research(FakeFM(script), L, m, "1")
     assert (r["added"], r["dropped"]) == (1, 1) and [k.title for k in m.tasks()[0].children] == ["Write slugify in slugs.py"]
+
+
+def test_steps_that_research_or_test_no_file_are_dropped(env):
+    _, L, m = env
+    script = lambda t: [t["add_actionable"](title=a, detail=b, kind=k) for a, b, k in (
+        ("inventory.py: research stock counts", "", "code"), ("tests/full_check: run everything", "", "test"),
+        ("Write tests", "in tests/test_inventory.py", "test"), ("Create research.py", "", "code"))]
+    assert research(FakeFM(script), L, m, "1")["added"] == 2 and [k.title for k in m.tasks()[0].children] == ["Write tests", "Create research.py"]
