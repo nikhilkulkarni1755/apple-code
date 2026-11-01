@@ -25,6 +25,14 @@ def _junk_title(title):
     return title.casefold() in _TOOL_NAMES or bool(re.fullmatch(r"[A-Za-z0-9]+(_[A-Za-z0-9]+)+", title))
 
 
+_FILENAME = re.compile(r"[\w./-]+\.\w{1,5}")
+
+
+def _tidy_title(title, files):
+    """A step titled just 'cactus.py' says nothing: make it 'Create cactus.py' (or 'Update' if the file exists)."""
+    return f"{'Update' if title in files else 'Create'} {title}" if _FILENAME.fullmatch(title) else title
+
+
 def _restates(item, task):
     """Research that only repeats the task it came from makes no progress; small models do this a lot."""
     like = lambda a, b: difflib.SequenceMatcher(None, a.casefold(), b.casefold()).ratio() >= SAME
@@ -61,6 +69,7 @@ def research(fm, ledger, memory, task_id, web=None, spawn=None, max_tool_calls=8
         seen = {c.title.casefold() for c in task.children}
         kept = []
         for t in found:                     # no restatements of the task, and each title only once
+            t.title = _tidy_title(t.title, files)
             if not _restates(t, task) and not _junk_title(t.title) and t.title.casefold() not in seen:
                 kept.append(t)
                 seen.add(t.title.casefold())

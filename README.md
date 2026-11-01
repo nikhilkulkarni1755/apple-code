@@ -34,6 +34,8 @@ It prints each task and each attempt as it goes. A task counts as done only when
 ```sh
 cat MEMORY.md             # project state and the task plan
 apple-code trail 1.1      # everything done under task 1.1
+apple-code test           # run the project's tests (uses the pytest that comes with apple-code)
+apple-code run "python3 game.py"   # run any command; files it changes can be undone
 apple-code undo           # undo the last change (repeat to go back further); apple-code redo
 apple-code --help         # all commands
 ```

@@ -179,6 +179,28 @@ def test_tool_names_and_identifiers_are_not_steps(env):
     assert (r["added"], r["dropped"]) == (2, 7) and [k.title for k in m.tasks()[0].children] == ["Write sub() in calc.py", "Search"]
 
 
+def test_a_step_titled_with_just_a_filename_becomes_a_sentence(env):
+    _, L, m = env
+
+    def script(t):
+        t["add_actionable"](title="cactus.py", detail="the cactus class", kind="code")        # does not exist yet
+        t["add_actionable"](title="calc.py", detail="subtraction", kind="code")               # exists
+        t["add_actionable"](title="src/game/score.py", kind="code")
+        t["add_actionable"](title="Write notes.md for the player", kind="code")               # already a sentence
+        t["add_actionable"](title="v1.2", kind="code")                                        # looks like a filename: also made into a sentence
+    research(FakeFM(script), L, m, "1")
+    assert [k.title for k in m.tasks()[0].children] == ["Create cactus.py", "Update calc.py", "Create src/game/score.py", "Write notes.md for the player", "Create v1.2"]
+
+
+def test_the_goal_is_recorded_once_in_memory(tmp_path):
+    from agent.agents import AgentQueue
+    root = tmp_path / "ws"
+    root.mkdir()
+    L = Ledger(root)
+    AgentQueue(L, lambda ctx: None).start("Build the thing")
+    assert Memory(L).get("Goals") == "- Build the thing"
+
+
 def test_the_prompt_lists_the_projects_files_but_never_the_agents_own_notes(env):
     root, L, m = env
     (root / ".agents" / "a1").mkdir(parents=True)

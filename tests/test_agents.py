@@ -94,7 +94,7 @@ def test_a_long_or_odd_goal_is_stored_as_one_clean_line(ws):
     q.start("goal")
     q.spawn("root", "line one\n## Goals\n" + "y" * 2000 + "\0 ✓")
     goal = q.get("a1")["goal"]
-    assert "\n" not in goal and len(goal) <= 500 and q.memory("a1").get("Goals").startswith("line one")
+    assert "\n" not in goal and len(goal) <= 500 and q.memory("a1").get("Goals").startswith("- line one")
 
 
 # ------------------------------------------------------------------ own memory
@@ -109,7 +109,7 @@ def test_each_agent_has_its_own_memory_that_inherits_the_parents_design(ws):
     assert q.get("root")["memory"] == "MEMORY.md" and q.get("a1")["memory"] == ".agents/a1/MEMORY.md"
     for aid, goal in (("a1", "write the parser"), ("a2", "write the docs"), ("a3", "write the lexer")):
         m = q.memory(aid)
-        assert m.get("Goals").startswith(goal) and aid in m.get("Project") and m.get("Design") == "Use SQLite. Keep modules small."
+        assert m.get("Goals") == f"- {goal}" and aid in m.get("Project") and m.get("Design") == "Use SQLite. Keep modules small."
         assert [(t.kind, t.status) for t in m.tasks()] == [("research", "todo")]              # every agent starts by researching
     assert "spawned by a1" in q.memory("a3").get("Project")
     assert (root / ".agents" / "a1" / "MEMORY.md").exists() and (root / ".agents" / "a3" / "MEMORY.md").exists()

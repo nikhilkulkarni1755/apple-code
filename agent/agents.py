@@ -64,7 +64,6 @@ class AgentQueue:
         mem = Memory(self.ledger, path)
         with self.ledger.scope(agent=agent_id):
             mem.set("Project", f"Agent {agent_id}" + (f", spawned by {parent}." if parent else ", the root agent."))
-            mem.set("Goals", goal)
             if parent:
                 inherited = self.memory(parent).get("Design")
                 if inherited:
