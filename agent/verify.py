@@ -130,7 +130,7 @@ def syntax_errors(root, paths):
             try:
                 compile(f.read_text(), p, "exec")
             except SyntaxError as e:
-                out.append(f"{p}:{e.lineno}: {e.msg}")
+                out.append(f"{p}:{e.lineno}: {e.msg}" + (f" in `{e.text.strip()[:80]}`" if e.text and e.text.strip() else ""))   # the model sees the line, not only its number
             except (UnicodeDecodeError, ValueError) as e:
                 out.append(f"{p}: cannot be read as Python ({e})")
     return out

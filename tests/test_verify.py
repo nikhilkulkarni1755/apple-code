@@ -283,3 +283,10 @@ def test_a_missing_import_in_a_test_is_named(tmp_path):
     out = "E   NameError: name 'word_count' is not defined\nE   NameError: name 'other' is not defined\nE   NameError: name 'test_x' is not defined"
     assert import_hint(tmp_path, out) == "add `from words import word_count` at the top of the test file"
     assert import_hint(tmp_path, "1 passed") == "" and import_hint(tmp_path, None) == ""
+
+
+def test_a_syntax_error_shows_the_line_that_is_wrong(tmp_path):
+    (tmp_path / "a.py").write_text("def f():\n    return (1,\nx = 2 +\n")
+    (tmp_path / "b.py").write_text("x = 1\n")
+    got = syntax_errors(tmp_path, ["a.py", "b.py"])
+    assert len(got) == 1 and got[0].startswith("a.py:") and "`" in got[0]
