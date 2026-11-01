@@ -1,6 +1,6 @@
 # apple-code
 
-A coding agent that runs entirely on your Mac, using Apple's on-device Foundation Model. It researches a goal in your project, plans small tasks, writes the code, and checks the work by running your tests itself. Every action is recorded and can be undone.
+A coding agent that runs entirely on your Mac, using Apple's on-device Foundation Model. It reads your project, plans small code and test tasks, writes the code, and checks the work by running your tests itself. Every action is recorded and can be undone.
 
 **Requirements:** a Mac with Apple silicon, macOS 26 or newer, Apple Intelligence turned on, and Apple's command line tools (`xcode-select --install`). Python 3.12+ or [uv](https://docs.astral.sh/uv/).
 

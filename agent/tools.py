@@ -43,6 +43,9 @@ def _time_limit(seconds):
         signal.signal(signal.SIGALRM, old)
 
 
+_FENCE = re.compile(r"\A\s*```[^\n]*\n(.*?)\n?```.*\Z", re.S)
+
+
 def visible_files(ledger):
     """The project's files as the model should see them: not the agent's own notes (MEMORY.md, .agents/)."""
     return sorted(p for p in ledger._snapshot() if p.rsplit("/", 1)[-1] != "MEMORY.md" and not p.startswith(".agents/"))
@@ -114,7 +117,8 @@ def make_tools(ledger, web=None):
         if text is None:
             raise ActionError(f"{rel} does not exist")
         if text.count(snippet) != 1:
-            raise ActionError(f"{name} must appear exactly once in {rel} (found {text.count(snippet)} times)")
+            n = text.count(snippet)
+            raise ActionError(f"{name} must appear exactly once in {rel} (found {n} times)" + (f". The file begins:\n{text[:600]}" if n == 0 else ""))
         return rel, text, text.index(snippet)
 
     def insert_after(path, anchor, text):
@@ -154,6 +158,8 @@ def make_tools(ledger, web=None):
             return edit("create_file")(path=path, content=content)   # let the ledger reject it with its usual message
         rel, full = ledger._resolve(path)
         old = ledger._read(full)
+        if isinstance(content, str) and not rel.endswith(".md"):
+            content = _FENCE.sub(r"\1\n", content)   # the model often wraps code in a markdown fence, which is a syntax error in the file
         if old is None or not isinstance(content, str):
             return edit("create_file")(path=path, content=content)
         if old == content:

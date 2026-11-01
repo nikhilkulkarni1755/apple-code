@@ -4,7 +4,7 @@ import time
 from dataclasses import dataclass
 
 from .ledger import ActionError
-from .memory import Memory, Task, clean
+from .memory import MAX_GOAL, Memory, Task, clean
 
 MAX_CHILDREN = 3      # subagents one agent may spawn
 MAX_SUBAGENTS = 15    # subagents ever created in this workspace (the root agent is not counted)
@@ -57,7 +57,7 @@ class AgentQueue:
 
     # ---- creating ----
     def _create(self, agent_id, parent, goal, path):
-        goal = " ".join(goal.split())[:500]
+        goal = " ".join(goal.split())[:MAX_GOAL]
         with self.ledger.db:
             self.ledger.db.execute("INSERT INTO agents(id, parent, goal, status, memory, ts) VALUES (?,?,?,?,?,?)",
                                    (agent_id, parent, goal, "queued", path, time.time()))
@@ -68,7 +68,7 @@ class AgentQueue:
                 inherited = self.memory(parent).get("Design")
                 if inherited:
                     mem.set("Design", inherited)
-            mem.add_plan(goal, [Task(f"Research: {goal[:60]}", goal, kind="research")])
+            mem.add_plan(goal, [Task(f"Plan: {goal[:60]}", goal, kind="research")])
         return agent_id
 
     def start(self, goal):
@@ -80,10 +80,10 @@ class AgentQueue:
         if row is None:
             return self._create(ROOT, None, goal, "MEMORY.md")
         memory = self.memory(ROOT)
-        if clean(goal, 300) not in memory.get("Goals"):
+        if clean(goal, MAX_GOAL) not in memory.get("Goals"):
             with self.ledger.scope(agent=ROOT):
-                text = " ".join(goal.split())[:500]
-                memory.add_plan(text, [Task(f"Research: {text[:60]}", text, kind="research")])
+                text = " ".join(goal.split())[:MAX_GOAL]
+                memory.add_plan(text, [Task(f"Plan: {text[:60]}", text, kind="research")])
             if row["status"] in ("done", "blocked", "failed"):
                 self._set(ROOT, status="queued", attempts=0, error=None)
         elif row["status"] in ("blocked", "failed"):   # the same goal again: try what was blocked once more

@@ -56,3 +56,18 @@ def test_read_tools(env):
     assert "f.py" in t["list_files"]("*.py") and "nonl.txt" not in t["list_files"]("*.py")
     assert t["grep"]("TODO") == "f.py:3: # TODO"
     assert t["read_file"](path="nope.py").startswith("error")
+
+
+def test_create_file_drops_a_markdown_fence_around_code(env):
+    root, L, t = env
+    t["create_file"](path="a.py", content="```python\ndef f():\n    return 1\n```\n```,path:")
+    t["create_file"](path="b.md", content="```\nkept\n```\n")
+    assert (root / "a.py").read_text() == "def f():\n    return 1\n" and (root / "b.md").read_text() == "```\nkept\n```\n"
+
+
+def test_a_missed_replace_shows_the_start_of_the_file_so_the_model_can_copy_it(env):
+    root, L, t = env
+    with pytest.raises(Exception, match="found 0 times.*\n.*import os"):
+        t["replace_text"](path="f.py", old="not in the file", new="y")
+    with pytest.raises(Exception, match=r"found 11 times\)$"):
+        t["replace_text"](path="f.py", old=" ", new="y")

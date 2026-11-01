@@ -1,25 +1,24 @@
-"""Research a task before doing it: look through the codebase (and the web), then record what must be done as actionables.
-Every read the model makes is a ledger record (action, element) attributed to this task, so the research is accountable."""
-import difflib
+"""Plan a goal: look through the codebase, then record what must be done as a flat list of code and test steps (1.1, 1.2, ...).
+There are no research steps: iteration (write code, run tests, repeat) is the work. Every read the model makes is a ledger record."""
 import re
+from pathlib import Path
 
 from .fm import Tool
 from .ledger import ActionError
-from .memory import KINDS, Task
+from .memory import Task
 from .evidence import gather
-from .handoff import BUDGET, MAX_CONTINUATIONS, continuation_depth, looked_at, note
-from .planner import FMBackend, Planner, route
+from .handoff import BUDGET
 from .spec import join_examples, parse_examples
 from .tools import _p, make_tools, visible_files
+from .verify import is_test_path
 
-READ_TOOLS = ("read_file", "list_files", "grep", "web_search", "fetch_url")
-INSTRUCTIONS = ("You prepare work for a coding agent. Look at the project with the tools only if it has files, and search the web only if "
-                "you need outside information. Then call add_actionable once for each small step that must be done, in order (3 to 8 steps). "
-                "Write each title as a short imperative phrase that names the file it changes. Use kind=code whenever the change can be made "
-                "now; use kind=research only for something the project files cannot tell you. Steps are things to build, not tools to call.")
+READ_TOOLS = ("read_file", "list_files", "grep")   # no web: research is not part of the loop
+INSTRUCTIONS = ("You prepare work for a coding agent. Look at the project with the tools only if it has files. Then call add_actionable once for each "
+                "small step that must be done, in order (3 to 8 steps). Write each title as a short imperative phrase that names the file it changes. "
+                "Use kind=code to write or change code, kind=test to write tests for it. Do not repeat a step already listed under Next tasks. "
+                "Steps are things to build, not tools to call.")
 _TOOL_NAMES = {*READ_TOOLS, "add_actionable", "spawn_subagent", "run_tests", "run_command", "replace_text", "insert_after", "create_file", "delete_file"}
-MAX_DEPTH = 3          # a research task nested deeper than this (id 1.1.1.1) is not researched further
-SAME = 0.7             # how alike two texts must be for one to count as a restatement of the other
+MAX_STEPS = 12         # steps one goal may have: the list grows 1.1, 1.2, ... and stops, so it never crowds out the next goal
 MAX_TASKS = 200
 
 
@@ -36,10 +35,17 @@ def _tidy_title(title, files):
     return f"{'Update' if title in files else 'Create'} {title}" if _FILENAME.fullmatch(title) else title
 
 
-def _restates(item, task):
-    """Research that only repeats the task it came from makes no progress; small models do this a lot."""
-    like = lambda a, b: difflib.SequenceMatcher(None, a.casefold(), b.casefold()).ratio() >= SAME
-    return item.kind == "research" and (like(item.title, task.title) or like(item.detail or item.title, task.detail or task.title))
+_FILE_TYPES = {".py", ".md", ".txt", ".json", ".toml", ".cfg", ".yml", ".yaml", ".sh", ".js", ".ts", ".html", ".css"}
+
+
+def _work(item):
+    """What a step is about: its kind and the files it names."""
+    return item.kind, frozenset(f for f in _FILENAME.findall(f"{item.title} {item.detail}") if Path(f).suffix in _FILE_TYPES)
+
+
+def _repeats(item, done):
+    kind, files = _work(item)
+    return bool(files) and any(k == kind and (files <= f or f <= files) for k, f in done)   # the same files, or some of them, for the same kind of work
 
 
 def research(fm, ledger, memory, task_id, web=None, spawn=None, max_tool_calls=8):
@@ -53,44 +59,41 @@ def research(fm, ledger, memory, task_id, web=None, spawn=None, max_tool_calls=8
 
     def add_actionable(title, detail="", kind="code", done_when="", examples=""):
         shown = join_examples(parse_examples(examples))   # examples that pass as safe, whole comparisons become the step's acceptance
-        found.append(Task(title, detail, shown or done_when, kind=kind if kind in KINDS else "code"))
+        found.append(Task(title, detail, shown or done_when, kind=kind if kind in ("code", "test") else "code"))
         return f"actionable {len(found)} added"
 
     tools = [t for t in make_tools(ledger, web) if t.name in READ_TOOLS]
-    tools.append(Tool("add_actionable", "Add one step that must be done. kind is 'code' to change something or 'research' if more must be looked up first.",
+    tools.append(Tool("add_actionable", "Add one step that must be done. kind is 'code' to change something or 'test' to write tests for it.",
                       [_p("title", "string", "short name"), _p("detail", "string", "what to do, naming the files involved", True),
-                       _p("kind", "string", "code or research", True), _p("done_when", "string", "how to tell it is done", True),
+                       _p("kind", "string", "code or test", True), _p("done_when", "string", "how to tell it is done", True),
                        _p("examples", "string", "calls with their expected results as Python comparisons, separated by ';'", True)],
                       add_actionable))
     if spawn is not None:
         tools.append(Tool("spawn_subagent", "Hand a large, self-contained part of this work to a new subagent with its own memory.",
                           [_p("goal", "string", "what the subagent should accomplish")], lambda goal: f"spawned {spawned.append(spawn(goal)) or spawned[-1]}"))
     files = visible_files(ledger)
-    prompt = (f"Task: {task.title}. {task.detail}\n" + (f"Done when: {task.done_when}\n" if task.done_when else "")
+    detail = "The whole request is under Goals." if f"- {task.detail}" in memory.get("Goals") else task.detail   # a goal is shown once
+    prompt = (f"Task: {task.title}. {detail}\n" + (f"Done when: {task.done_when}\n" if task.done_when else "")
               + gather(ledger, f"{task.title} {task.detail}", budget=1200)
               + f"\nProject notes:\n{memory.context(1200)}\nThen call add_actionable for each step.")
     with ledger.scope(task=task_id, kind="research"):
         r = fm.run(prompt, tools, INSTRUCTIONS, max_tool_calls=max_tool_calls, budget_tokens=BUDGET)
         ledger.log_session(r)
-        seen = {c.title.casefold() for c in task.children}
+        seen = {c.title.casefold() for c in _walk(memory.tasks())}
+        done = [w for w in map(_work, _walk(memory.tasks())) if w[1]]
         kept = []
-        for t in found:                     # no restatements of the task, and each title only once
+        for t in found:                     # each title once in the whole plan, no kind of work on the same files twice in the whole plan
             t.title = _tidy_title(t.title, files)
-            if not _restates(t, task) and not _junk_title(t.title) and t.title.casefold() not in seen:
+            if not _junk_title(t.title) and t.title.casefold() not in seen and not _repeats(t, done):
                 kept.append(t)
                 seen.add(t.title.casefold())
+                done.append(_work(t))
+        kept = kept[:max(0, MAX_STEPS - len(task.children))]
         steps_found = len(kept)
-        winding_down = r.get("reason") == "budget" or r.get("error") == "context_overflow"
-        if winding_down and continuation_depth(task.title) < MAX_CONTINUATIONS:   # out of room: queue the rest, saying what was already read
-            seen_already = looked_at(ledger, ledger._scope["agent"], task_id)
-            kept.append(Task(f"Continue researching: {task.title}", ("Already looked at: " + seen_already) if seen_already else "Pick up where the last session stopped.",
-                             kind="research"))
-            memory.add_handoff(task_id, note(task, done=f"{steps_found} step(s) recorded", problem="", looked=seen_already))
         if kept:
             memory.add_children(task_id, kept)   # kept even if the model later ran out of context
     error = f"{r['error']}: {r['message']}" if "error" in r else None
-    return {"added": steps_found, "dropped": len(found) - steps_found, "spawned": spawned, "error": error, "wound_down": winding_down,
-            "continued": len(kept) - steps_found}
+    return {"added": steps_found, "dropped": len(found) - steps_found, "spawned": spawned, "error": error}
 
 
 def _walk(tasks):
@@ -100,22 +103,22 @@ def _walk(tasks):
 
 
 def research_step(fm, web=None, worker=None):
-    """A step for agents.task_runner: research tasks are researched; code tasks go to `worker(ctx, task)`
-    (the worker loop is not built yet, so without one a code task is reported blocked rather than pretended done)."""
+    """A step for agents.task_runner: the goal itself is planned into steps; every step under it (1.1, 1.2, ...) goes to
+    `worker(ctx, task)` (without one it is reported blocked rather than pretended done)."""
 
     def step(ctx, task):
-        if task.kind == "code":
+        if task.kind in ("code", "test") or "." in task.id:
             return worker(ctx, task) if worker else {"ok": False, "summary": "no worker to carry out code tasks yet"}
-        if task.id.count(".") >= MAX_DEPTH or len(list(_walk(ctx.memory.tasks()))) >= MAX_TASKS:
-            return {"ok": False, "summary": "research limit reached (too deep or too many tasks)"}
-        if "." not in task.id and not task.children:   # a whole goal: if it is big, split it into parts before researching each part
-            split = route(fm, task.detail or task.title, Planner(ctx.memory, FMBackend(fm), parent=task.id))
-            if split["route"] == "decompose" and split["tasks"]:
-                return {"ok": True, "summary": f"split into {len(split['tasks'])} parts"}
+        if len(list(_walk(ctx.memory.tasks()))) >= MAX_TASKS:
+            return {"ok": False, "summary": "too many tasks"}
+        named = next((f for f in _FILENAME.findall(task.detail or task.title) if is_test_path(f) and f in visible_files(ctx.ledger)), None)
+        if named and worker:   # the goal names tests that already exist: there is nothing to plan, make them pass
+            task.done_when = f"pytest {named} passes"
+            ctx.memory.set_done_when(task.id, task.done_when)
+            return worker(ctx, task)
         r = research(fm, ctx.ledger, ctx.memory, task.id, web, ctx.spawn)
-        if r["added"] == 0 and not r["spawned"] and not r["continued"]:
-            return {"ok": False, "summary": r["error"] or ("research gave nothing new; try a smaller, more specific goal" if r["dropped"] else "research found nothing to do")}
-        return {"ok": True, "summary": f"{r['added']} actionables, {len(r['spawned'])} subagents"
-                + (", ran out of room: the rest is queued as a new task" if r["continued"] else "") + (f" ({r['error']})" if r["error"] else "")}
+        if r["added"] == 0 and not r["spawned"]:
+            return {"ok": False, "summary": r["error"] or ("planning gave nothing new; try a smaller, more specific goal" if r["dropped"] else "planning found nothing to do")}
+        return {"ok": True, "summary": f"{r['added']} steps, {len(r['spawned'])} subagents" + (f" ({r['error']})" if r["error"] else "")}
 
     return step

@@ -658,7 +658,7 @@ def test_the_runner_announces_each_task_and_its_outcome(tmp_path):
     q = AgentQueue(L, task_runner(lambda ctx, task: {"ok": task.kind == "research", "summary": "did it"}, say=lines.append))
     q.start("goal")
     q.run()
-    assert lines == ["task 1 [research] Research: goal", "  -> done: did it"]
+    assert lines == ["task 1 [research] Plan: goal", "  -> done: did it"]
 
 
 def test_a_task_that_cannot_be_verified_blocks_the_agent_and_leaves_the_project_clean(tmp_path):

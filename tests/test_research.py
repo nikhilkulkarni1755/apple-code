@@ -2,7 +2,7 @@ import pytest
 
 from agent.ledger import ActionError, Ledger
 from agent.memory import Memory, Task
-from agent.research import MAX_DEPTH, READ_TOOLS, research, research_step
+from agent.research import MAX_STEPS, READ_TOOLS, research, research_step
 from agent.tools import make_tools
 from agent.web import Web
 from tests.test_ledger import snapshot
@@ -16,9 +16,6 @@ class FakeFM:
 
     def run(self, prompt, tools, instructions="", max_tool_calls=8, temperature=None, budget_tokens=None):
         names = [t.name for t in tools]
-        if "start_task" in names:                      # the router asks first: this goal is small, research it directly
-            {t.name: t.handler for t in tools}["start_task"]()
-            return {"content": "", "stopped": False, "calls": []}
         self.runs.append((prompt, names, max_tool_calls))
         self.script({t.name: t.handler for t in tools})
         return self.result
@@ -48,12 +45,12 @@ def test_research_reads_the_codebase_then_records_actionables_under_the_task(env
         t["grep"]("def add")
         t["read_file"](path="calc.py")
         t["add_actionable"](title="Write sub()", detail="in calc.py next to add", kind="code", done_when="pytest test_calc.py")
-        t["add_actionable"](title="Check rounding rules", kind="research")
+        t["add_actionable"](title="Check rounding rules", kind="research")   # there is no research kind: it becomes code
 
     r = research(FakeFM(script), L, m, "1", max_tool_calls=5)
-    assert r == {"added": 2, "dropped": 0, "spawned": [], "error": None, "wound_down": False, "continued": 0}
+    assert r == {"added": 2, "dropped": 0, "spawned": [], "error": None}
     kids = m.tasks()[0].children
-    assert [(k.id, k.kind, k.title, k.done_when) for k in kids] == [("1.1", "code", "Write sub()", "pytest test_calc.py"), ("1.2", "research", "Check rounding rules", "")]
+    assert [(k.id, k.kind, k.title, k.done_when) for k in kids] == [("1.1", "code", "Write sub()", "pytest test_calc.py"), ("1.2", "code", "Check rounding rules", "")]
     assert m.next_task().id == "1.1" and "[code] Write sub()" in (root / "MEMORY.md").read_text()
     reads = [(r["action"], r["element"], r["task_id"], r["kind"], r["agent"]) for r in L.trail("1") if r["action"] in ("list_files", "grep", "read_file")]
     assert reads == [("list_files", "*.py", "1", "research", "root"), ("grep", "*", "1", "research", "root"), ("read_file", "calc.py", "1", "research", "root")]
@@ -71,16 +68,6 @@ def test_the_research_prompt_names_the_task_and_offers_only_reading_tools(env):
     assert not {"replace_text", "insert_after", "create_file", "delete_file", "run_command", "run_tests"} & set(names)
 
 
-def test_web_tools_appear_only_when_a_backend_is_given_and_are_logged_as_research(env):
-    _, L, m = env
-    fm = FakeFM(lambda t: (t["web_search"]("python subtraction"), t["fetch_url"]("https://docs.example/x"), t["add_actionable"](title="Use docs")))
-    research(fm, L, m, "1", web=web())
-    assert fm.runs[0][1] == ["read_file", "list_files", "grep", "web_search", "fetch_url", "add_actionable"]
-    got = [(r["action"], r["element"], r["kind"], r["task_id"]) for r in L.list() if r["action"] in ("web_search", "fetch_url")]
-    assert got == [("web_search", "python subtraction", "research", "1"), ("fetch_url", "https://docs.example/x", "research", "1")]
-    assert L.output([r["seq"] for r in L.list() if r["action"] == "fetch_url"][0]) == "page text for https://docs.example/x"
-    assert set(READ_TOOLS) >= {"web_search", "fetch_url"}
-
 
 def test_actionables_found_before_the_model_ran_out_of_context_are_kept(env):
     _, L, m = env
@@ -92,7 +79,7 @@ def test_actionables_found_before_the_model_ran_out_of_context_are_kept(env):
 def test_nothing_found_changes_nothing(env):
     root, L, m = env
     before = (root / "MEMORY.md").read_bytes()
-    assert research(FakeFM(lambda t: None), L, m, "1") == {"added": 0, "dropped": 0, "spawned": [], "error": None, "wound_down": False, "continued": 0}
+    assert research(FakeFM(lambda t: None), L, m, "1") == {"added": 0, "dropped": 0, "spawned": [], "error": None}
     assert (root / "MEMORY.md").read_bytes() == before
 
 
@@ -156,7 +143,7 @@ def test_repeated_titles_are_added_once_even_across_research_passes(env):
     _, L, m = env
     script = lambda t: [t["add_actionable"](title=x, kind="code") for x in ("Write sub()", "write SUB()", "Add a test", "Write sub()")]
     assert research(FakeFM(script), L, m, "1")["added"] == 2
-    assert research(FakeFM(script), L, m, "1") == {"added": 0, "dropped": 4, "spawned": [], "error": None, "wound_down": False, "continued": 0}
+    assert research(FakeFM(script), L, m, "1") == {"added": 0, "dropped": 4, "spawned": [], "error": None}
     assert [k.title for k in m.tasks()[0].children] == ["Write sub()", "Add a test"]
 
 
@@ -164,7 +151,7 @@ def test_research_step_says_so_when_everything_was_a_restatement(env):
     _, L, m = env
     step = research_step(FakeFM(lambda t: t["add_actionable"](title="Research: add subtraction", kind="research")))
     out = step(Ctx(L, m), m.tasks()[0])
-    assert out == {"ok": False, "summary": "research gave nothing new; try a smaller, more specific goal"} and m.tasks()[0].children == []
+    assert out == {"ok": False, "summary": "planning gave nothing new; try a smaller, more specific goal"} and m.tasks()[0].children == []
 
 
 def test_tool_names_and_identifiers_are_not_steps(env):
@@ -197,8 +184,8 @@ def test_examples_become_the_steps_acceptance_and_unsafe_ones_are_dropped(env):
 
     def script(t):
         t["add_actionable"](title="Write sub() in calc.py", detail="d", kind="code", examples="sub(5, 3) == 2; sub(0, 4) == -4; __import__('os') == 1")
-        t["add_actionable"](title="Write mul() in calc.py", detail="d", kind="code", done_when="mul works", examples="not a comparison")
-        t["add_actionable"](title="Write div() in calc.py", detail="d", kind="code", done_when="pytest test_calc.py")
+        t["add_actionable"](title="Write mul() in mul.py", detail="d", kind="code", done_when="mul works", examples="not a comparison")
+        t["add_actionable"](title="Write div() in div.py", detail="d", kind="code", done_when="pytest test_calc.py")
     research(FakeFM(script), L, m, "1")
     assert [k.done_when for k in m.tasks()[0].children] == ["sub(5, 3) == 2; sub(0, 4) == -4", "mul works", "pytest test_calc.py"]
 
@@ -263,19 +250,12 @@ def test_research_step_researches_research_tasks_and_blocks_code_tasks_without_a
     _, L, m = env
     step = research_step(FakeFM(lambda t: t["add_actionable"](title="Do it", kind="code")))
     out = step(Ctx(L, m), m.tasks()[0])
-    assert out["ok"] and "1 actionables" in out["summary"]
+    assert out["ok"] and "1 steps" in out["summary"]
     code = m.next_task()
     assert code.kind == "code" and step(Ctx(L, m), code) == {"ok": False, "summary": "no worker to carry out code tasks yet"}
     done = research_step(FakeFM(lambda t: None), worker=lambda ctx, task: {"ok": True, "summary": "worked"})
     assert done(Ctx(L, m), code) == {"ok": True, "summary": "worked"}
 
-
-def test_research_step_stops_researching_when_nothing_is_found_or_it_goes_too_deep(env):
-    _, L, m = env
-    assert research_step(FakeFM(lambda t: None))(Ctx(L, m), m.tasks()[0])["ok"] is False
-    deep = Task("deep", id="1" + ".1" * MAX_DEPTH, kind="research")
-    out = research_step(FakeFM(lambda t: pytest.fail("too deep to research")))(Ctx(L, m), deep)
-    assert out["ok"] is False and "limit" in out["summary"]
 
 
 # ---- real model (pytest -m fm) ----
@@ -295,61 +275,55 @@ def test_real_model_researches_a_small_project_and_records_actionables(env):
     assert snapshot(root)["calc.py"] == b"def add(a, b):\n    return a + b\n"
 
 
-class Router(FakeFM):
-    """A model that decides the goal is big, splits it into parts when asked, and researches each part into steps."""
-
-    def __init__(self, parts):
-        super().__init__(lambda t: None)
-        self.parts, self.sessions = parts, []
-
-    def run(self, prompt, tools, instructions="", max_tool_calls=8, temperature=None, budget_tokens=None):
-        t = {x.name: x.handler for x in tools}
-        self.sessions.append(sorted(t))
-        if "decompose_task" in t:
-            t["decompose_task"]()
-        elif "add_task" in t:
-            for title in self.parts:
-                t["add_task"](title=title, detail="d", done_when="tests pass", big=False)
-        elif "add_actionable" in t:
-            t["add_actionable"](title="Write the code for " + prompt.split(".")[0][-20:], kind="code")
-        return {"content": "", "stopped": False, "calls": []}
-
-
-def test_a_big_goal_is_split_into_parts_before_anything_is_researched(env):
+def test_a_goal_naming_existing_tests_is_worked_not_researched(env):
     root, L, m = env
-    fm = Router(["Game state and collision", "Scoring", "Keyboard and screen"])
-    out = research_step(fm)(Ctx(L, m), m.tasks()[0])
-    assert out == {"ok": True, "summary": "split into 3 parts"}
-    kids = m.tasks()[0].children
-    assert [(k.id, k.kind, k.title) for k in kids] == [("1.1", "research", "Game state and collision"), ("1.2", "research", "Scoring"), ("1.3", "research", "Keyboard and screen")]
-    assert m.next_task().id == "1.1" and sorted(fm.sessions[0]) == ["decompose_task", "start_task"] and "add_task" in fm.sessions[1]
+    (root / "tests").mkdir()
+    (root / "tests" / "test_x.py").write_text("def test_x(): pass\n")
+    m.add_plan("g", [Task("Make it pass", "make the tests in tests/test_x.py pass by creating x.py", kind="research")])
+    seen = []
+    out = research_step(FakeFM(lambda t: 1 / 0), worker=lambda ctx, task: seen.append(task.done_when) or {"ok": True, "summary": "ok"})(Ctx(L, m), m.tasks()[-1])
+    assert out["ok"] and seen == ["pytest tests/test_x.py passes"]
 
 
-def test_each_part_is_then_researched_into_code_steps(env):
-    root, L, m = env
-    fm = Router(["Scoring", "Restart"])
-    step = research_step(fm)
-    step(Ctx(L, m), m.tasks()[0])
-    out = step(Ctx(L, m), m.next_task())                                         # task 1.1, not top level: researched, not split again
-    assert out["ok"] and [k.kind for k in m.tasks()[0].children[0].children] == ["code"] and "decompose_task" not in sorted(fm.sessions[-1])
-    assert m.next_task().kind == "code" and m.next_task().id == "1.1.1"
-
-
-def test_a_small_goal_is_researched_directly_and_never_split(env):
+def test_web_tools_are_never_offered_to_the_planner(env):
     _, L, m = env
-    fm = FakeFM(lambda t: t["add_actionable"](title="Write sub() in calc.py", kind="code"))
-    assert research_step(fm)(Ctx(L, m), m.tasks()[0])["ok"] and [k.title for k in m.tasks()[0].children] == ["Write sub() in calc.py"]
+    fm = FakeFM(lambda t: t["add_actionable"](title="Write sub() in calc.py"))
+    research(fm, L, m, "1", web=web())
+    assert fm.runs[0][1] == ["read_file", "list_files", "grep", "add_actionable"] and set(READ_TOOLS) == {"read_file", "list_files", "grep"}
 
 
-def test_if_splitting_fails_the_goal_is_researched_instead(env):
+def test_the_goal_is_planned_into_a_flat_list_and_every_step_is_worked_not_planned_again(env):
     _, L, m = env
+    worked = []
+    step = research_step(FakeFM(lambda t: [t["add_actionable"](title=x, kind=k) for x, k in (("Write sub() in calc.py", "code"), ("Write tests in test_sub.py", "test"))]),
+                         worker=lambda ctx, task: worked.append(task.id) or {"ok": True, "summary": "ok"})
+    assert step(Ctx(L, m), m.tasks()[0]) == {"ok": True, "summary": "2 steps, 0 subagents"}
+    step(Ctx(L, m), m.next_task())
+    m.complete("1.1", "ok")
+    step(Ctx(L, m), m.next_task())
+    assert worked == ["1.1", "1.2"] and [(k.id, k.kind) for k in m.tasks()[0].children] == [("1.1", "code"), ("1.2", "test")]
+    assert not any(k.children for k in m.tasks()[0].children)
+    old = Task("old research", id="1.1", kind="research")                      # a research task from an older plan is worked, not researched
+    assert research_step(FakeFM(lambda t: pytest.fail("no research")), worker=lambda ctx, task: {"ok": True, "summary": "worked"})(Ctx(L, m), old)["ok"]
 
-    class Broken(Router):
-        def run(self, prompt, tools, instructions="", max_tool_calls=8, temperature=None, budget_tokens=None):
-            names = [x.name for x in tools]
-            if "add_task" in names:
-                return {"error": "guardrail", "message": "blocked", "calls": []}           # the splitter fails
-            return super().run(prompt, tools, instructions, max_tool_calls, temperature, budget_tokens)
 
-    out = research_step(Broken(["x"]))(Ctx(L, m), m.tasks()[0])
-    assert out["ok"] and m.tasks()[0].children[0].kind == "code"                           # fell back to ordinary research
+def test_a_step_that_repeats_the_work_of_an_existing_one_is_dropped_whatever_its_wording(env):
+    _, L, m = env
+    first = lambda t: t["add_actionable"](title="Write slugify in slugs.py", kind="code")
+    assert research(FakeFM(first), L, m, "1")["added"] == 1
+    again = lambda t: [t["add_actionable"](title=x, detail=d, kind=k) for x, d, k in (
+        ("Implement the slug function", "put it in slugs.py", "code"),            # same kind, same file: a repeat
+        ("Write tests in tests/test_slugs.py", "for slugs.py", "test"),           # another kind and file: new
+        ("Cover slugify in tests/test_slugs.py", "", "test"),                      # a repeat of the one above
+        ("Write words.py", "", "code"))]                                           # a different file: new
+    r = research(FakeFM(again), L, m, "1")
+    assert (r["added"], r["dropped"]) == (2, 2) and [k.id for k in m.tasks()[0].children] == ["1.1", "1.2", "1.3"]
+
+
+def test_a_goal_never_gets_more_than_max_steps_so_the_next_goal_is_reached(env):
+    _, L, m = env
+    script = lambda t: [t["add_actionable"](title=f"Write part{i}.py", kind="code") for i in range(MAX_STEPS + 8)]
+    assert research(FakeFM(script), L, m, "1")["added"] == MAX_STEPS
+    script2 = lambda t: [t["add_actionable"](title=f"Write other{i}.py", kind="code") for i in range(5)]
+    assert research(FakeFM(script2), L, m, "1")["added"] == 0
+    assert [k.id for k in m.tasks()[0].children][-1] == f"1.{MAX_STEPS}"

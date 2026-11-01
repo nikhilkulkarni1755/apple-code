@@ -51,7 +51,7 @@ def test_the_plan_is_in_memory_for_the_next_session(env):
     Planner(m, Scripted(lambda g, c: [t("One", done_when="pytest passes"), t("Two")])).decompose("Make a thing")
     heir = Memory(Ledger(root))
     assert heir.next_task().title == "One" and heir.next_task().done_when == "pytest passes"
-    assert "Next tasks:\n- [ ] 1 [research] One" in heir.context()
+    assert "Next tasks:\n- [ ] 1 [code] One" in heir.context()
 
 
 def test_decomposing_is_undoable(env):
@@ -160,11 +160,12 @@ class FakeFM:
 def test_fm_backend_collects_add_task_calls():
     def script(prompt, tools):
         for title in ("Design", "Build"):
-            tools["add_task"](title=title, detail="d", done_when="w", big=title == "Build")
+            tools["add_task"](title=title, detail="d", done_when="w", big=title == "Build", kind="code" if title == "Build" else "research")
         return {"content": "", "stopped": False, "calls": []}
 
     out = FMBackend(FakeFM(script)).split("goal", "ctx")
-    assert out == [{"title": "Design", "detail": "d", "done_when": "w", "big": False}, {"title": "Build", "detail": "d", "done_when": "w", "big": True}]
+    assert out == [{"title": "Design", "detail": "d", "done_when": "w", "big": False, "kind": "research"},
+                   {"title": "Build", "detail": "d", "done_when": "w", "big": True, "kind": "code"}]
 
 
 def test_fm_backend_turns_model_errors_into_plan_errors():
@@ -204,12 +205,12 @@ def test_a_title_is_used_once_across_the_whole_plan(env):
     assert titles(out) == [("Parser", ["Grammar"]), "Lexer"]
 
 
-def test_a_goal_can_be_split_under_an_existing_task_and_its_parts_are_to_be_researched(env):
+def test_a_goal_can_be_split_under_an_existing_task_and_its_parts_are_coded(env):
     root, _, m = env
     m.add_plan("Build a game", [Task("Research: build a game", "A game", kind="research")])
     out = Planner(m, Scripted(lambda g, c: [t("Rules"), t("Scoring", big=True)] if g.startswith("Build") else [t("Add points"), t("Floor it")]), parent="1").decompose("Build a game")
     got = m.tasks()
-    assert [x.id for x in got] == ["1"] and [(c.id, c.kind) for c in got[0].children] == [("1.1", "research"), ("1.2", "research")]
+    assert [x.id for x in got] == ["1"] and [(c.id, c.kind) for c in got[0].children] == [("1.1", "code"), ("1.2", "code")]
     assert [c.id for c in got[0].children[1].children] == ["1.2.1", "1.2.2"] and [x.title for x in out] == ["Rules", "Scoring"]
 
 
@@ -231,3 +232,13 @@ def test_the_splitting_prompt_asks_for_testable_parts():
 
     FMBackend(Spy()).split("Build a terminal game", "")
     assert "automated tests" in seen[0] and "no keyboard or screen" in seen[0]
+
+
+def test_a_task_keeps_the_kind_the_model_gave_it_and_a_bad_label_means_code(tmp_path):
+    class Backend:
+        def split(self, goal, context):
+            return [{"title": t, "kind": k} for t, k in (("a", "code"), ("b", "test"), ("c", "poetry"), ("d", None), ("e", "research"))]
+
+    m = Memory(Ledger(tmp_path))
+    assert [t.kind for t in Planner(m, Backend()).decompose("goal")] == ["code", "test", "code", "code", "code"]
+    assert "[test] b" in (tmp_path / "MEMORY.md").read_text()
