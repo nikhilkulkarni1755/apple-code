@@ -750,3 +750,16 @@ def test_only_a_retry_is_sampled_at_a_different_temperature(env):
     from agent.worker import RETRY_TEMPERATURE
     fm, out = work(env, [buggy, idle, fix])
     assert out["ok"] and fm.temperatures == [None, RETRY_TEMPERATURE, RETRY_TEMPERATURE]
+
+
+def test_a_retry_shows_a_whole_longer_file_that_the_failure_names(tmp_path):
+    root = tmp_path / "ws"
+    root.mkdir()
+    L = Ledger(root)
+    m = Memory(L)
+    m.add_plan("g", [Task("Make words", "write words.py", kind="code")])
+    body = "def words(t):\n" + "".join(f"    # line {i} of a longer helper\n" for i in range(55)) + "    return t +\n"
+    wrong = lambda t, p=None: t["create_file"](path="words.py", content=body)
+    fm = FakeFM([wrong, idle])
+    work_task(fm, L, m, m.tasks()[0], max_iterations=2)
+    assert len(body) > 1800 and "# line 54 of a longer helper\n    return t +" in fm.prompts[1]

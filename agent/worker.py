@@ -18,6 +18,7 @@ INSTRUCTIONS = ("You are a coding agent. Do the task by editing files with the t
                 "Call run_tests when you are done, then reply DONE.")
 TOOLS = ("read_file", "list_files", "grep", "create_file", "replace_text", "insert_after", "run_tests")
 RETRY_TEMPERATURE = 0.8   # a retry with the same prompt and the default sampling often gives the same wrong answer: vary it from the second attempt on
+RETRY_FACTS = 3000   # characters of project facts in a retry prompt (1,800 on the first): room for the whole file a syntax error or traceback names
 RESERVE = 2500   # tokens left free for tool results and the answer
 
 
@@ -81,7 +82,7 @@ def work_task(fm, ledger, memory, task, agent="root", web=None, max_iterations=4
             head.append("Handoff from the agent before you:\n" + earlier)
         if tight:
             head.append("The last session ran out of room. Do ONE small piece, call run_tests, and stop.")
-        extra = [] if lean else [facts if it == 1 else gather(ledger, f"{text} {failure}"), "Notes:\n" + memory.context(900)]   # a retry sees the files as they are now, and those the failure names
+        extra = [] if lean else [facts if it == 1 else gather(ledger, f"{text} {failure}", budget=RETRY_FACTS), "Notes:\n" + memory.context(900)]   # a retry sees the files as they are now, and those the failure names
         for parts, failed in ((head + extra, failure), (head, failure), (head, failure[:300])):   # full, then without notes, then minimal
             label = "The tests currently fail:" if it == 1 else "Your last attempt failed:"
             prompt = "\n".join(p for p in parts + ([label + "\n" + failed] if failed else []) if p)
