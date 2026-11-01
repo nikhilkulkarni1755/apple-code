@@ -6,6 +6,7 @@ import re
 from .fm import Tool
 from .ledger import ActionError
 from .memory import KINDS, Task
+from .evidence import gather
 from .planner import FMBackend, Planner, route
 from .tools import _p, make_tools, visible_files
 
@@ -62,10 +63,11 @@ def research(fm, ledger, memory, task_id, web=None, spawn=None, max_tool_calls=8
                           [_p("goal", "string", "what the subagent should accomplish")], lambda goal: f"spawned {spawned.append(spawn(goal)) or spawned[-1]}"))
     files = visible_files(ledger)
     prompt = (f"Task: {task.title}. {task.detail}\n" + (f"Done when: {task.done_when}\n" if task.done_when else "")
-              + ("Files in the project: " + ", ".join(files[:25]) if files else "The project has no files yet.")
+              + gather(ledger, f"{task.title} {task.detail}", budget=1200)
               + f"\nProject notes:\n{memory.context(1200)}\nThen call add_actionable for each step.")
     with ledger.scope(task=task_id, kind="research"):
         r = fm.run(prompt, tools, INSTRUCTIONS, max_tool_calls=max_tool_calls)
+        ledger.log_session(r)
         seen = {c.title.casefold() for c in task.children}
         kept = []
         for t in found:                     # no restatements of the task, and each title only once

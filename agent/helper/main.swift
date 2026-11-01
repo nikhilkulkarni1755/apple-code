@@ -68,6 +68,11 @@ func makeTools(_ specs: [[String: Any]], bridge: Bridge) throws -> [BridgeTool] 
     }
 }
 
+func used(_ session: LanguageModelSession?) async -> Int {
+    guard let session else { return 0 }
+    return (try? await SystemLanguageModel.default.tokenCount(for: Array(session.transcript))) ?? 0
+}
+
 func handle(_ req: [String: Any]) async {
     let model = SystemLanguageModel.default
     let instructions = req["instructions"] as? String ?? ""
@@ -77,6 +82,7 @@ func handle(_ req: [String: Any]) async {
         return
     }
     let bridge = Bridge(maxCalls: req["max_tool_calls"] as? Int ?? 8)
+    var session: LanguageModelSession? = nil
     do {
         let tools = try makeTools(req["tools"] as? [[String: Any]] ?? [], bridge: bridge)
         if req["cmd"] as? String == "count" {
@@ -87,12 +93,12 @@ func handle(_ req: [String: Any]) async {
                   "context": model.contextSize])
             return
         }
-        let session = LanguageModelSession(model: model, tools: tools, instructions: instructions)
+        session = LanguageModelSession(model: model, tools: tools, instructions: instructions)
         let options = GenerationOptions(temperature: req["temperature"] as? Double)
-        let r = try await session.respond(to: prompt, options: options)
-        emit(["event": "done", "content": r.content, "stopped": false])
+        let r = try await session!.respond(to: prompt, options: options)
+        emit(["event": "done", "content": r.content, "stopped": false, "tokens": await used(session), "context": model.contextSize])
     } catch let e as LanguageModelSession.ToolCallError where e.underlyingError is StopError {
-        emit(["event": "done", "content": "", "stopped": true])
+        emit(["event": "done", "content": "", "stopped": true, "tokens": await used(session), "context": model.contextSize])
     } catch let e as LanguageModelSession.GenerationError {
         var kind = "other"
         if case .exceededContextWindowSize = e { kind = "context_overflow" }

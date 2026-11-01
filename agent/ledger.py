@@ -243,6 +243,14 @@ class Ledger:
         return self._insert(ts=time.time(), action=str(action), args=json.dumps(args, default=repr), status="rejected" if error else "ok",
                             error=error, output=self._hash(result) if isinstance(result, str) else None, element=str(element)[:200])
 
+    def log_session(self, result):
+        """Record how much of the context window a model session used, and the error it ended with, if any."""
+        if "tokens" in result:
+            self.log_read("session", self._scope["kind"] or "-", {"tokens": result["tokens"], "context": result.get("context"),
+                                                                    "tool_calls": len(result.get("calls", []))})
+        if "error" in result:
+            self.log_read("model_error", result["error"], {"message": str(result.get("message", ""))[:200]}, error=result["error"])
+
     def trail(self, task, agent=None):
         """Every record made under `task` or any task nested below it ('1' includes '1.2' and '1.2.3'), oldest first."""
         sql = "SELECT * FROM actions WHERE (task_id = ? OR task_id LIKE ?)" + (" AND agent = ?" if agent else "") + " ORDER BY seq"

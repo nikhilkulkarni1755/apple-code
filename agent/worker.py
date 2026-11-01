@@ -2,6 +2,7 @@
 The harness runs the tests and judges the evidence (agent/verify.py), so the model cannot declare itself done."""
 import json
 
+from .evidence import gather
 from .research import research_step
 from .runner import run_tests
 from .tools import make_tools, visible_files
@@ -30,6 +31,10 @@ def work_task(fm, ledger, memory, task, agent="root", web=None, max_iterations=4
     names = TOOLS + (("delete_file",) if any(w in text.lower() for w in ("delete", "remove")) else ()) + (("web_search", "fetch_url") if web else ())
     tools = [t for t in make_tools(ledger, web) if t.name in names]
 
+    facts = gather(ledger, text)                     # what is in the project, found by the harness: no model tokens spent reading files
+    with ledger.scope(task=task.id, kind="code"):
+        ledger.log_read("evidence", task.id, {"chars": len(facts)}, facts)
+
     def run_acceptance(iteration):
         with ledger.scope(task=task.id, kind="test", iteration=iteration):
             seq = run_tests(ledger, args)
@@ -44,7 +49,7 @@ def work_task(fm, ledger, memory, task, agent="root", web=None, max_iterations=4
 
     def prompt_for(failure, lean, it):
         head = [f"Task {task.id}: {task.title}", task.detail, f"Done when: {('pytest ' + args).strip()} passes with at least one test"]
-        extra = [] if lean else ["Files: " + (", ".join(visible_files(ledger)[:25]) or "none yet"), "Notes:\n" + memory.context(900)]
+        extra = [] if lean else [facts, "Notes:\n" + memory.context(900)]
         for parts, failed in ((head + extra, failure), (head, failure), (head, failure[:300])):   # full, then without notes, then minimal
             label = "The tests currently fail:" if it == 1 else "Your last attempt failed:"
             text = "\n".join(p for p in parts + ([label + "\n" + failed] if failed else []) if p)
@@ -60,6 +65,7 @@ def work_task(fm, ledger, memory, task, agent="root", web=None, max_iterations=4
     for it in range(1, max_iterations + 1):
         with ledger.scope(task=task.id, kind="code", iteration=it):
             r = fm.run(prompt_for(failure, lean, it), tools, INSTRUCTIONS, max_tool_calls=max_tool_calls)
+            ledger.log_session(r)
         notes = []
         if "error" in r:
             lean = lean or r["error"] == "context_overflow"

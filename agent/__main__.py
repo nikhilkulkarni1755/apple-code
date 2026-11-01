@@ -45,6 +45,7 @@ def main(argv=None):
     sv = sub.add_parser("solve", help="research a goal, plan it, and carry out the code tasks with the on-device model")
     sv.add_argument("goal")
     sub.add_parser("agents", help="list agents and their state")
+    sub.add_parser("recap", help="what every agent did, how it went, and what was noticed")
     tr = sub.add_parser("trail", help="everything done under a task (and the tasks nested below it)")
     tr.add_argument("task")
     tr.add_argument("--agent")
@@ -88,8 +89,14 @@ def main(argv=None):
                 for r in queue.run():
                     print(f"{r['id']:5s} {r['status']:8s} {r['summary'] or r['error'] or ''}")
                 print(Memory(ledger).get("Current state"))
+                from .recap import write
+                print("\n" + write(ledger, queue, Memory(ledger)))
             finally:
                 fm.close()
+        elif a.cmd == "recap":
+            from .memory import Memory
+            from .recap import build
+            print(build(ledger, AgentQueue(ledger, None, resume=False), Memory(ledger)))
         elif a.cmd == "agents":
             for r in AgentQueue(ledger, None, resume=False).agents():
                 print(f"{r['id']:5s} {r['status']:8s} tries={r['attempts']} parent={r['parent'] or '-':5s} {r['goal'][:70]}")

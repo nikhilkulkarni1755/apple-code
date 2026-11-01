@@ -61,8 +61,8 @@ class FM:
                     result = f"error: {e}"
                 calls.append((msg["name"], msg["args"], result))
                 self._send({"id": msg["id"], "result": result})
-            elif msg["event"] == "done":
-                return {"content": msg["content"], "stopped": msg["stopped"], "calls": calls}
+            elif msg["event"] == "done":   # tokens / context: how much of the window this session used, when the helper says so
+                return {"content": msg["content"], "stopped": msg["stopped"], "calls": calls, **{k: msg[k] for k in ("tokens", "context") if k in msg}}
             else:
                 return {"error": msg["kind"], "message": msg["message"], "calls": calls}
 

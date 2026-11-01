@@ -207,7 +207,8 @@ def test_the_prompt_lists_the_projects_files_but_never_the_agents_own_notes(env)
     (root / ".agents" / "a1" / "MEMORY.md").write_text("notes\n")
     fm = FakeFM(lambda t: None)
     research(fm, L, m, "1")
-    assert "Files in the project: calc.py, test_calc.py" in fm.runs[0][0] and "MEMORY.md" not in fm.runs[0][0].split("Project notes")[0]
+    assert "Code in the project:\n  calc.py: def add(a, b)" in fm.runs[0][0] and "Tests: test_calc.py" in fm.runs[0][0]
+    assert "MEMORY.md" not in fm.runs[0][0].split("Project notes")[0]
 
 
 def test_an_empty_project_is_said_to_be_empty_and_the_prompt_has_no_stray_filenames(tmp_path):

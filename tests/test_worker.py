@@ -278,13 +278,21 @@ def test_running_out_of_context_still_gets_the_work_verified(env):
 def test_after_a_context_overflow_the_next_prompt_drops_the_notes(env):
     root, L, m, task = env
     fm, _ = work(env, [lambda t, p: {"error": "context_overflow", "message": "x", "calls": []}, idle], max_iterations=2)
-    assert "Notes:" in fm.prompts[0] and "Files:" in fm.prompts[0] and "Notes:" not in fm.prompts[1] and "Files:" not in fm.prompts[1]
+    assert "Notes:" in fm.prompts[0] and "Code in the project:" in fm.prompts[0]
+    assert "Notes:" not in fm.prompts[1] and "Code in the project:" not in fm.prompts[1]
 
 
 def test_a_guardrail_refusal_costs_an_attempt_but_does_not_end_the_task(env):
     root, L, m, task = env
     fm, out = work(env, [lambda t, p: {"error": "guardrail", "message": "blocked", "calls": []}, good])
     assert out["ok"] and fm.calls == 2
+
+
+def test_the_evidence_the_model_was_given_is_recorded_in_the_ledger(env):
+    root, L, m, task = env
+    work(env, [idle], max_iterations=1)
+    rows = [r for r in L.list() if r["action"] == "evidence"]
+    assert len(rows) == 1 and rows[0]["task_id"] == "1" and "calc.py: def add(a, b)" in L.output(rows[0]["seq"])
 
 
 def test_the_prompt_is_trimmed_until_it_fits_the_context_window(env):

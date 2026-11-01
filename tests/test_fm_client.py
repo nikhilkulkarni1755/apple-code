@@ -28,6 +28,7 @@ for line in sys.stdin:
             assert reply["id"] == i
             last = reply["result"]
         emit({{"event": "done", "content": last, "stopped": False}}); continue
+    if p == "tokens": emit({{"event": "done", "content": "x", "stopped": False, "tokens": 321, "context": 8192}}); continue
     emit({{"event": "done", "content": "echo:" + p + "|" + req["instructions"], "stopped": False}})
 '''
 
@@ -49,6 +50,10 @@ def tool(name, handler, params=()):
 
 def test_plain_run_returns_content_and_passes_instructions(fake):
     assert fake.run("hello", instructions="be brief") == {"content": "echo:hello|be brief", "stopped": False, "calls": []}
+
+
+def test_the_helper_can_report_how_much_of_the_window_a_session_used(fake):
+    assert fake.run("tokens") == {"content": "x", "stopped": False, "calls": [], "tokens": 321, "context": 8192}
 
 
 def test_tool_calls_are_executed_in_python_and_results_go_back(fake):
