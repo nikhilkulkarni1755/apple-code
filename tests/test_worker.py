@@ -16,7 +16,7 @@ class FakeFM:
 
     def __init__(self, attempts, context=8192):
         self.attempts, self.prompts, self.tool_names, self.context, self.calls = list(attempts), [], [], context, 0
-        self.budgets = []
+        self.budgets, self.temperatures = [], []
 
     def count(self, tools, instructions="", prompt=""):
         return {"tools": 100, "instructions": 50, "prompt": len(prompt), "context": self.context}
@@ -24,6 +24,7 @@ class FakeFM:
     def run(self, prompt, tools, instructions="", max_tool_calls=8, temperature=None, budget_tokens=None):
         self.prompts.append(prompt)
         self.budgets.append(budget_tokens)
+        self.temperatures.append(temperature)
         self.tool_names.append([t.name for t in tools])
         attempt = self.attempts[min(self.calls, len(self.attempts) - 1)]
         self.calls += 1
@@ -743,3 +744,9 @@ def test_a_new_test_that_forgets_its_import_gets_the_import_in_the_next_prompt(e
                                 t["create_file"](path="test_sub.py", content="def test_sub():\n    assert sub(5, 3) == 2\n"))
     fm, out = work(env, [forgot, idle])
     assert "NameError: name 'sub' is not defined" in fm.prompts[1] and "Hint: add `from calc import sub` at the top of the test file" in fm.prompts[1]
+
+
+def test_only_a_retry_is_sampled_at_a_different_temperature(env):
+    from agent.worker import RETRY_TEMPERATURE
+    fm, out = work(env, [buggy, idle, fix])
+    assert out["ok"] and fm.temperatures == [None, RETRY_TEMPERATURE, RETRY_TEMPERATURE]
