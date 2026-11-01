@@ -274,3 +274,12 @@ def test_an_import_may_be_extended_but_not_replaced_by_code(tmp_path):
     assert protected_violations(root, {"test_calc.py": "from calc import add\n\n\ndef test_add():\n    assert add(1, 2) == 3\n"}) == []
     (root / "test_calc.py").write_text("def add(a, b):\n    return a + b\n\n\ndef test_add():\n    assert add(1, 2) == 3\n")
     assert protected_violations(root, {"test_calc.py": "from calc import add\n\n\ndef test_add():\n    assert add(1, 2) == 3\n"}) == ["removed an import from test_calc.py"]
+
+
+def test_a_missing_import_in_a_test_is_named(tmp_path):
+    from agent.verify import import_hint
+    (tmp_path / "words.py").write_text("def word_count(text):\n    return len(text.split())\n")
+    (tmp_path / "test_words.py").write_text("def test_x(): pass\n")
+    out = "E   NameError: name 'word_count' is not defined\nE   NameError: name 'other' is not defined\nE   NameError: name 'test_x' is not defined"
+    assert import_hint(tmp_path, out) == "add `from words import word_count` at the top of the test file"
+    assert import_hint(tmp_path, "1 passed") == "" and import_hint(tmp_path, None) == ""

@@ -52,3 +52,7 @@ Planning is now complete and stable: round 2 shows up in all three runs (before:
 4. **Model quality limits remain:** logic that stays wrong across four attempts (`slugify` returning `helloworld`, P1 1.1), test code written into the module file, `replace_text` misses (found 0 times) in P3.
 
 Planned edits for the next cycle (one PR each): (D) normalize the model's `run_tests` arguments; (E) when the failure is `NameError: name 'X' is not defined` and a project module defines X, add the import line to the failure text; (F) plan one unit of work as one step, code and its tests together, naming both files.
+
+### Edits made after rerun round 1
+- **D (PR #6):** `run_tests` drops a leading `pytest` / `python -m pytest` and finds a bare test file under `tests/`.
+- **E:** when a failure is `NameError: name 'X' is not defined` and a top-level module defines `X`, the next prompt gets `Hint: add \`from <module> import X\` at the top of the test file`.

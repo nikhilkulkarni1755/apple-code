@@ -82,6 +82,16 @@ def failure_summary(output, limit=700):
     return "\n".join(dict.fromkeys(keep + tail))[:limit]
 
 
+_UNDEFINED = re.compile(r"NameError: name '(\w+)' is not defined")
+
+
+def import_hint(root, output):
+    """A new test that uses a project function without importing it fails with a NameError that small models repeat attempt after attempt:
+    say which import is missing, when a module in the project's top folder defines the name."""
+    return "; ".join(f"add `from {f.stem} import {name}` at the top of the test file" for name in dict.fromkeys(_UNDEFINED.findall(output or ""))
+                     for f in sorted(root.glob("*.py")) if not is_test_path(f.name) and re.search(rf"^(?:def|class) {name}\b", f.read_text(errors="ignore"), re.M))
+
+
 _IMPORT = re.compile(r"^\s*(import\s+\S|from\s+\S+\s+import\s+\S)")
 
 
