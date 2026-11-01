@@ -37,3 +37,18 @@ Planned edits for the next cycle (one PR each): (C) regenerate the evidence on e
 - **C (PR #3):** a retry re-gathers the evidence, including the contents of files the failure text names.
 - **B (plan hygiene):** a step is dropped if its title is `research ...` or `file.py: research ...`, or if it is a test step that names no file.
 - **A (plan the rest):** after a goal is planned, a last step `Plan the rest of the goal` is queued. When the earlier steps are done it runs the planner again on the goal with the line `Already done: ...`, under the same goal so ids stay flat (1.1, 1.2, ...), and queues another such step. A goal is planned at most 3 times (`MAX_REPLANS = 2` re-plans) and has at most 12 plus 2 steps. Planning again that adds nothing new ends the goal. Side effect: `Last task completed` in the notes can be the planning step.
+
+## Rerun round 1 (after edits C, B, A) — P1, P2, P3 once each
+| Prompt | Result | Time | Plan |
+|---|---|---|---|
+| P1 | not solved; all 4 steps blocked, everything rolled back | 637 s | 4 steps (both rounds) + plan-the-rest; done |
+| P2 | not solved; `inventory.py` + its tests verified, `report` blocked | 348 s | 4 steps + plan-the-rest |
+| P3 | not solved; 785 s cap; the plan-the-rest step added `calc.py` steps (round 2 *is* planned now) but the tokenize steps never passed | 785 s | 2 + (2 more after the first re-plan) |
+
+Planning is now complete and stable: round 2 shows up in all three runs (before: P3 planned round 1 only). The failures are in the worker:
+1. **Wasted `run_tests` calls.** In P1 task 1.3, 10 of 24 tool calls were `run_tests` with arguments that cannot work: `pytest tests/test_words.py` (the word `pytest` is taken as a path; exit 4) and `test_words.py` (the file is in `tests/`; exit 4). Each costs a call out of 12 and the result tokens.
+2. **The same fixable failure repeated four times.** The model's test used `word_count` without importing it (`NameError: name 'word_count' is not defined`) on all four attempts (P1 1.3), and again in P2 1.4. The pytest message names the problem; the model does not act on it.
+3. **"code" and "test" steps do not differ for the worker.** It gets the same instructions for both, and the verifier needs a new passing test for either. A test-only step has no code to pass against (P3 1.1 wrote `tokens.py` itself), and a code step writes its own tests. Splitting one unit of work into two steps doubles the sessions and the chances of a mismatch (P2 1.1 earlier: code and test disagreed on an attribute name).
+4. **Model quality limits remain:** logic that stays wrong across four attempts (`slugify` returning `helloworld`, P1 1.1), test code written into the module file, `replace_text` misses (found 0 times) in P3.
+
+Planned edits for the next cycle (one PR each): (D) normalize the model's `run_tests` arguments; (E) when the failure is `NameError: name 'X' is not defined` and a project module defines X, add the import line to the failure text; (F) plan one unit of work as one step, code and its tests together, naming both files.

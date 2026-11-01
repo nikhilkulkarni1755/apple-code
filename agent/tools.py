@@ -18,6 +18,15 @@ def _clip(text, n=2000):
     return text if len(text) <= n else text[:n // 2] + f"\n...[{len(text) - n} chars cut]...\n" + text[-n // 2:]
 
 
+_PYTEST_WORD = re.compile(r"^\s*(?:python3?\s+-m\s+)?pytest\b\s*")
+
+
+def _test_args(ledger, args):
+    """pytest arguments as a small model writes them: a leading 'pytest' is dropped, and a test file named without its tests/ folder is found there."""
+    return " ".join(f"tests/{a}" if a.endswith(".py") and not (ledger.root / a).exists() and (ledger.root / "tests" / a).exists() else a
+                    for a in _PYTEST_WORD.sub("", args).split())
+
+
 def _str(value, name, nonempty=False):
     if not isinstance(value, str) or (nonempty and not value):
         raise ActionError(f"{name} must be a {'non-empty ' if nonempty else ''}string")
@@ -193,7 +202,7 @@ def make_tools(ledger, web=None):
         Tool("run_command", "Run a shell command in the workspace; returns exit code and output.",
              [_p("cmd", "string", "shell command")], lambda cmd: shell(ledger.run_command(cmd))),
         Tool("run_tests", "Run pytest; returns exit code and output.",
-             [_p("args", "string", "pytest arguments, e.g. test_x.py -k name", True)], lambda args="": shell(run_tests(ledger, _str(args, "args")))),
+             [_p("args", "string", "pytest arguments, e.g. test_x.py -k name", True)], lambda args="": shell(run_tests(ledger, _test_args(ledger, _str(args, "args"))))),
     ]
     if web is not None:
         tools += [Tool("web_search", "Search the web; returns titles, URLs and snippets.", [_p("query", "string", "what to look up")],

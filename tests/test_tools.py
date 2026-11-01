@@ -71,3 +71,11 @@ def test_a_missed_replace_shows_the_start_of_the_file_so_the_model_can_copy_it(e
         t["replace_text"](path="f.py", old="not in the file", new="y")
     with pytest.raises(Exception, match=r"found 11 times\)$"):
         t["replace_text"](path="f.py", old=" ", new="y")
+
+
+def test_run_tests_forgives_a_leading_pytest_and_a_test_file_without_its_folder(env):
+    root, L, t = env
+    (root / "tests").mkdir()
+    (root / "tests" / "test_a.py").write_text("def test_a():\n    assert True\n")
+    for args in ("pytest tests/test_a.py", "python -m pytest test_a.py", "test_a.py -v", ""):
+        assert "1 passed" in t["run_tests"](args=args), args
