@@ -80,13 +80,13 @@ def work_task(fm, ledger, memory, task, agent="root", web=None, max_iterations=4
             head.append("Handoff from the agent before you:\n" + earlier)
         if tight:
             head.append("The last session ran out of room. Do ONE small piece, call run_tests, and stop.")
-        extra = [] if lean else [facts, "Notes:\n" + memory.context(900)]
+        extra = [] if lean else [facts if it == 1 else gather(ledger, f"{text} {failure}"), "Notes:\n" + memory.context(900)]   # a retry sees the files as they are now, and those the failure names
         for parts, failed in ((head + extra, failure), (head, failure), (head, failure[:300])):   # full, then without notes, then minimal
             label = "The tests currently fail:" if it == 1 else "Your last attempt failed:"
-            text = "\n".join(p for p in parts + ([label + "\n" + failed] if failed else []) if p)
-            if _fits(fm, tools, text):
+            prompt = "\n".join(p for p in parts + ([label + "\n" + failed] if failed else []) if p)
+            if _fits(fm, tools, prompt):
                 break
-        return text
+        return prompt
 
     seq, code, out, err = run_acceptance(0)            # the "red" run: what the tests say before any work
     baseline = judge(args, code, out, err, edited=True)
