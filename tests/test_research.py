@@ -301,10 +301,36 @@ def test_the_goal_is_planned_into_a_flat_list_and_every_step_is_worked_not_plann
     step(Ctx(L, m), m.next_task())
     m.complete("1.1", "ok")
     step(Ctx(L, m), m.next_task())
-    assert worked == ["1.1", "1.2"] and [(k.id, k.kind) for k in m.tasks()[0].children] == [("1.1", "code"), ("1.2", "test")]
+    assert worked == ["1.1", "1.2"] and [(k.id, k.kind) for k in m.tasks()[0].children] == [("1.1", "code"), ("1.2", "test"), ("1.3", "research")]
     assert not any(k.children for k in m.tasks()[0].children)
-    old = Task("old research", id="1.1", kind="research")                      # a research task from an older plan is worked, not researched
-    assert research_step(FakeFM(lambda t: pytest.fail("no research")), worker=lambda ctx, task: {"ok": True, "summary": "worked"})(Ctx(L, m), old)["ok"]
+
+
+def test_when_the_steps_are_done_the_goal_is_planned_again_flat_and_only_twice(env):
+    _, L, m = env
+    n = []
+    plan = lambda t: t["add_actionable"](title=f"Write part{len(n)}.py", kind="code")
+    fm = FakeFM(lambda t: (n.append(1), plan(t)))
+    step = research_step(fm, worker=lambda ctx, task: {"ok": True, "summary": "ok"})
+    for _ in range(12):
+        task = m.next_task()
+        if task is None:
+            break
+        out = step(Ctx(L, m), task)
+        m.complete(task.id, out["summary"]) if out["ok"] else m.mark(task.id, "blocked")
+    kids = m.tasks()[0].children
+    assert [(k.id, k.kind) for k in kids] == [("1.1", "code"), ("1.2", "research"), ("1.3", "code"), ("1.4", "research"), ("1.5", "code")]
+    assert not any(k.children for k in kids) and "Already done: Write part1.py" in fm.runs[1][0] and len(fm.runs) == 3
+
+
+def test_planning_the_rest_with_nothing_new_just_finishes(env):
+    _, L, m = env
+    step = research_step(FakeFM(lambda t: t["add_actionable"](title="Write sub() in calc.py", kind="code")), worker=lambda ctx, task: {"ok": True, "summary": "ok"})
+    step(Ctx(L, m), m.tasks()[0])
+    m.complete("1.1", "ok")
+    last = m.next_task()
+    assert step(Ctx(L, m), last) == {"ok": True, "summary": "0 steps, 0 subagents"}
+    m.complete(last.id, "ok")
+    assert m.next_task() is None
 
 
 def test_a_step_that_repeats_the_work_of_an_existing_one_is_dropped_whatever_its_wording(env):

@@ -498,7 +498,7 @@ def test_the_next_agent_gets_the_handoff_in_its_prompt_and_finishes_the_job(tmp_
     m = Memory(L)
     assert {r["id"]: (r["status"], r["error"]) for r in q.agents()} == {"root": ("done", None)} and m.next_task() is None
     kids = {t.id: t for t in m.tasks()[0].children}
-    assert list(kids) == ["1.1"] and [c.id for c in kids["1.1"].children] == ["1.1.1"]                  # the continuation hangs under the task
+    assert list(kids) == ["1.1", "1.2"] and [c.id for c in kids["1.1"].children] == ["1.1.1"]                  # the continuation hangs under the task
     assert "Handoff from the agent before you:" in prompts[-1] and "Task: Add sub() to calc.py" in prompts[-1]
     assert "Handoff from the agent before you" not in prompts[0] and (root / "calc.py").read_text().endswith("return a - b\n")
     assert "Handoffs" in (root / "MEMORY.md").read_text() and L.verify() == []
@@ -634,7 +634,7 @@ def test_a_goal_goes_through_research_work_and_verification_end_to_end(tmp_path)
     q.run()
     m = Memory(L)
     assert {r["id"]: r["status"] for r in q.agents()} == {"root": "done"} and m.next_task() is None
-    assert m.get("Last task completed").startswith("1.1 Add sub() to calc.py") and "(evidence: run #" in m.get("Last task completed")
+    assert m.get("Last task completed").startswith("1.2 Plan the rest of the goal")
     assert (root / "calc.py").read_text().endswith("return a - b\n") and L.verify() == []
     trail = [(r["action"], r["kind"], r["iteration"]) for r in L.trail("1.1") if r["action"] in ("verify", "list_files")]
     assert ("verify", "test", 1) in trail
