@@ -735,3 +735,11 @@ def test_a_retry_sees_the_files_as_they_are_now_including_the_ones_the_failure_n
     work_task(fm, L, m, m.tasks()[0], max_iterations=2)
     assert "The project has no files yet." in fm.prompts[0]
     assert "The project has no files yet." not in fm.prompts[1] and "Contents of words.py:\ndef words(t):\n    return t" in fm.prompts[1]
+
+
+def test_a_new_test_that_forgets_its_import_gets_the_import_in_the_next_prompt(env):
+    root, L, m, task = env
+    forgot = lambda t, p=None: (t["insert_after"](path="calc.py", anchor="return a + b", text="\n\ndef sub(a, b):\n    return a - b"),
+                                t["create_file"](path="test_sub.py", content="def test_sub():\n    assert sub(5, 3) == 2\n"))
+    fm, out = work(env, [forgot, idle])
+    assert "NameError: name 'sub' is not defined" in fm.prompts[1] and "Hint: add `from calc import sub` at the top of the test file" in fm.prompts[1]

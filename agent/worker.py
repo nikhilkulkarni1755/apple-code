@@ -10,7 +10,7 @@ from .research import research_step
 from .spec import ensure_spec_test, join_examples, module_of, propose_examples
 from .runner import run_tests
 from .tools import make_tools, visible_files
-from .verify import (acceptance_args, failure_summary, frozen_check, is_test_path, judge, protected_violations, red_check, syntax_errors,
+from .verify import (acceptance_args, failure_summary, frozen_check, import_hint, is_test_path, judge, protected_violations, red_check, syntax_errors,
                      unmentioned_deletions, vacuous_tests)
 
 INSTRUCTIONS = ("You are a coding agent. Do the task by editing files with the tools. Write or extend a test that proves it works. "
@@ -136,6 +136,7 @@ def work_task(fm, ledger, memory, task, agent="root", web=None, max_iterations=4
                 verdict.ok, verdict.reasons, custom = False, [why], True
         why = "; ".join(verdict.reasons)
         new = why if custom else failure_summary(out) or why
+        new += "\nHint: " + hint if (hint := import_hint(ledger.root, out)) else ""
         record(it, verdict.ok, seq, why if new == why else f"{why} | {new}")   # the ledger row says what pytest reported, not only that it failed
         if verdict.ok:
             files = sorted({r["path"] for r in _edits_of_the_task(ledger, agent, task.id)})
