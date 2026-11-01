@@ -15,9 +15,10 @@ from .verify import is_test_path
 READ_TOOLS = ("read_file", "list_files", "grep")   # no web: research is not part of the loop
 INSTRUCTIONS = ("You prepare work for a coding agent. Look at the project with the tools only if it has files. Then call add_actionable once for each "
                 "small step that must be done, in order (3 to 8 steps). Write each title as a short imperative phrase that names the file it changes. "
-                "Use kind=code to write or change code, kind=test to write tests for it. Plan no step that only researches or reads: every step writes code or tests. Do not repeat a step already listed under Next tasks. "
+                "Use kind=code to write or change code, kind=test to write tests for it. Plan no step that only researches or reads: every step writes code or tests. Add only steps the goal still needs; if all it asks for is done, add none. Do not repeat a step already listed under Next tasks. "
                 "Steps are things to build, not tools to call.")
 _TOOL_NAMES = {*READ_TOOLS, "add_actionable", "spawn_subagent", "run_tests", "run_command", "replace_text", "insert_after", "create_file", "delete_file"}
+MAX_REPLANS = 2        # times a goal is planned again, after its steps are done, to add what the goal still needs
 MAX_STEPS = 12         # steps one goal may have: the list grows 1.1, 1.2, ... and stops, so it never crowds out the next goal
 MAX_TASKS = 200
 
@@ -77,10 +78,12 @@ def research(fm, ledger, memory, task_id, web=None, spawn=None, max_tool_calls=8
         tools.append(Tool("spawn_subagent", "Hand a large, self-contained part of this work to a new subagent with its own memory.",
                           [_p("goal", "string", "what the subagent should accomplish")], lambda goal: f"spawned {spawned.append(spawn(goal)) or spawned[-1]}"))
     files = visible_files(ledger)
+    finished = "; ".join(c.title for c in _walk(memory.tasks()) if c.status == "done" and not c.children and c.kind != "research")[:600]
     detail = "The whole request is under Goals." if f"- {task.detail}" in memory.get("Goals") else task.detail   # a goal is shown once
     prompt = (f"Task: {task.title}. {detail}\n" + (f"Done when: {task.done_when}\n" if task.done_when else "")
               + gather(ledger, f"{task.title} {task.detail}", budget=1200)
-              + f"\nProject notes:\n{memory.context(1200)}\nThen call add_actionable for each step.")
+              + f"\nProject notes:\n{memory.context(1200)}"
+              + (f"\nAlready done: {finished}" if finished else "") + "\nThen call add_actionable for each step.")
     with ledger.scope(task=task_id, kind="research"):
         r = fm.run(prompt, tools, INSTRUCTIONS, max_tool_calls=max_tool_calls, budget_tokens=BUDGET)
         ledger.log_session(r)
@@ -108,21 +111,25 @@ def _walk(tasks):
 
 
 def research_step(fm, web=None, worker=None):
-    """A step for agents.task_runner: the goal itself is planned into steps; every step under it (1.1, 1.2, ...) goes to
-    `worker(ctx, task)` (without one it is reported blocked rather than pretended done)."""
+    """A step for agents.task_runner: the goal itself is planned into steps, and so is its "plan the rest" step; every code and test step
+    goes to `worker(ctx, task)` (without one it is reported blocked rather than pretended done)."""
 
     def step(ctx, task):
-        if task.kind in ("code", "test") or "." in task.id:
+        if task.kind in ("code", "test"):
             return worker(ctx, task) if worker else {"ok": False, "summary": "no worker to carry out code tasks yet"}
         if len(list(_walk(ctx.memory.tasks()))) >= MAX_TASKS:
             return {"ok": False, "summary": "too many tasks"}
         named = next((f for f in _FILENAME.findall(task.detail or task.title) if is_test_path(f) and f in visible_files(ctx.ledger)), None)
-        if named and worker:   # the goal names tests that already exist: there is nothing to plan, make them pass
+        if named and worker and "." not in task.id:   # the goal names tests that already exist: there is nothing to plan, make them pass
             task.done_when = f"pytest {named} passes"
             ctx.memory.set_done_when(task.id, task.done_when)
             return worker(ctx, task)
-        r = research(fm, ctx.ledger, ctx.memory, task.id, web, ctx.spawn)
-        if r["added"] == 0 and not r["spawned"]:
+        root = task.id.split(".")[0]   # "plan the rest" steps plan under the goal, so the list stays flat
+        r = research(fm, ctx.ledger, ctx.memory, root, web, ctx.spawn)
+        goal = next(t for t in ctx.memory.tasks() if t.id == root)
+        if r["added"] and sum(c.kind == "research" for c in goal.children) < MAX_REPLANS:   # when these steps are done, look again at what is left
+            ctx.memory.add_children(root, [Task("Plan the rest of the goal", "Add the steps the goal still needs; none if it is all done.", kind="research")])
+        if r["added"] == 0 and not r["spawned"] and task.id == root:
             return {"ok": False, "summary": r["error"] or ("planning gave nothing new; try a smaller, more specific goal" if r["dropped"] else "planning found nothing to do")}
         return {"ok": True, "summary": f"{r['added']} steps, {len(r['spawned'])} subagents" + (f" ({r['error']})" if r["error"] else "")}
 

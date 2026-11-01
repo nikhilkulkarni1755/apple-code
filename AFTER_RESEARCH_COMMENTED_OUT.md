@@ -36,3 +36,4 @@ Planned edits for the next cycle (one PR each): (C) regenerate the evidence on e
 ### Edits made after the first P2/P3 runs
 - **C (PR #3):** a retry re-gathers the evidence, including the contents of files the failure text names.
 - **B (plan hygiene):** a step is dropped if its title is `research ...` or `file.py: research ...`, or if it is a test step that names no file.
+- **A (plan the rest):** after a goal is planned, a last step `Plan the rest of the goal` is queued. When the earlier steps are done it runs the planner again on the goal with the line `Already done: ...`, under the same goal so ids stay flat (1.1, 1.2, ...), and queues another such step. A goal is planned at most 3 times (`MAX_REPLANS = 2` re-plans) and has at most 12 plus 2 steps. Planning again that adds nothing new ends the goal. Side effect: `Last task completed` in the notes can be the planning step.
