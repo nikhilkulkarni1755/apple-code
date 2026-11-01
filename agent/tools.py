@@ -43,6 +43,11 @@ def _time_limit(seconds):
         signal.signal(signal.SIGALRM, old)
 
 
+def visible_files(ledger):
+    """The project's files as the model should see them: not the agent's own notes (MEMORY.md, .agents/)."""
+    return sorted(p for p in ledger._snapshot() if p.rsplit("/", 1)[-1] != "MEMORY.md" and not p.startswith(".agents/"))
+
+
 def make_tools(ledger, web=None):
     """The model's tools. Reads are logged to the ledger too (action, element, task), so it shows everything that was done.
     Pass a `web` (agent.web.Web) to also offer web_search and fetch_url."""
@@ -85,7 +90,7 @@ def make_tools(ledger, web=None):
 
     def _list_files(pattern="*"):
         _str(pattern, "pattern")
-        return "\n".join([p for p in sorted(ledger._snapshot()) if fnmatch.fnmatch(p, pattern)][:200]) or "(none)"
+        return "\n".join([p for p in visible_files(ledger) if fnmatch.fnmatch(p, pattern)][:200]) or "(none)"
 
     def list_files(pattern="*"):
         return logged("list_files", pattern, {"pattern": pattern}, lambda: _list_files(pattern))
@@ -94,7 +99,8 @@ def make_tools(ledger, web=None):
         rx = re.compile(_str(pattern, "pattern"))
         _str(glob, "glob")
         with _time_limit(3):
-            hits = [f"{p}:{i}: {l}" for p, t in sorted(ledger._snapshot().items()) if fnmatch.fnmatch(p, glob)
+            files = ledger._snapshot()
+            hits = [f"{p}:{i}: {l}" for p in visible_files(ledger) for t in [files[p]] if fnmatch.fnmatch(p, glob)
                     for i, l in enumerate(t.splitlines(), 1) if rx.search(l)]
         return "\n".join(hits[:50]) or "(no matches)"
 

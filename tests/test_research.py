@@ -15,7 +15,11 @@ class FakeFM:
         self.script, self.result, self.runs = script, result or {"content": "", "stopped": False, "calls": []}, []
 
     def run(self, prompt, tools, instructions="", max_tool_calls=8, temperature=None):
-        self.runs.append((prompt, [t.name for t in tools], max_tool_calls))
+        names = [t.name for t in tools]
+        if "start_task" in names:                      # the router asks first: this goal is small, research it directly
+            {t.name: t.handler for t in tools}["start_task"]()
+            return {"content": "", "stopped": False, "calls": []}
+        self.runs.append((prompt, names, max_tool_calls))
         self.script({t.name: t.handler for t in tools})
         return self.result
 
@@ -160,7 +164,49 @@ def test_research_step_says_so_when_everything_was_a_restatement(env):
     _, L, m = env
     step = research_step(FakeFM(lambda t: t["add_actionable"](title="Research: add subtraction", kind="research")))
     out = step(Ctx(L, m), m.tasks()[0])
-    assert out == {"ok": False, "summary": "research only restated the task"} and m.tasks()[0].children == []
+    assert out == {"ok": False, "summary": "research gave nothing new; try a smaller, more specific goal"} and m.tasks()[0].children == []
+
+
+def test_tool_names_and_identifiers_are_not_steps(env):
+    _, L, m = env
+
+    def script(t):
+        for junk in ("web_search", "Web_Search", "read_file", "add_actionable", "guide_title", "add_subtract_research", "a_b"):
+            t["add_actionable"](title=junk, kind="code")
+        t["add_actionable"](title="Write sub() in calc.py", kind="code")
+        t["add_actionable"](title="Search", kind="research")                     # an ordinary single word is fine
+    r = research(FakeFM(script), L, m, "1")
+    assert (r["added"], r["dropped"]) == (2, 7) and [k.title for k in m.tasks()[0].children] == ["Write sub() in calc.py", "Search"]
+
+
+def test_the_prompt_lists_the_projects_files_but_never_the_agents_own_notes(env):
+    root, L, m = env
+    (root / ".agents" / "a1").mkdir(parents=True)
+    (root / ".agents" / "a1" / "MEMORY.md").write_text("notes\n")
+    fm = FakeFM(lambda t: None)
+    research(fm, L, m, "1")
+    assert "Files in the project: calc.py, test_calc.py" in fm.runs[0][0] and "MEMORY.md" not in fm.runs[0][0].split("Project notes")[0]
+
+
+def test_an_empty_project_is_said_to_be_empty_and_the_prompt_has_no_stray_filenames(tmp_path):
+    root = tmp_path / "empty"
+    root.mkdir()
+    L = Ledger(root)
+    m = Memory(L)
+    m.add_plan("Build a game", [Task("Research: build a game", "A terminal dinosaur game", kind="research")])
+    fm = FakeFM(lambda t: None)
+    research(fm, L, m, "1")
+    prompt = fm.runs[0][0]
+    assert "The project has no files yet." in prompt and "calc.py" not in prompt + __import__("agent.research").research.INSTRUCTIONS
+
+
+def test_the_agents_notes_are_hidden_from_listing_and_searching(env):
+    root, L, m = env
+    t = {x.name: x.handler for x in make_tools(L)}
+    (root / ".agents" / "a1").mkdir(parents=True)
+    (root / ".agents" / "a1" / "MEMORY.md").write_text("secret plan\n")
+    assert "MEMORY.md" not in t["list_files"]() and t["grep"]("plan|Add subtraction") == "(no matches)"
+    assert t["read_file"](path="MEMORY.md")                                             # reading a named file is still allowed
 
 
 # ---- the step used by agent runners ----
@@ -206,3 +252,63 @@ def test_real_model_researches_a_small_project_and_records_actionables(env):
     assert {x["action"] for x in trail if x["element"] != "MEMORY.md"} <= {"list_files", "grep", "read_file", "web_search", "fetch_url"}
     assert any(x["action"] in ("list_files", "grep", "read_file") for x in trail) and all(x["kind"] == "research" for x in trail)
     assert snapshot(root)["calc.py"] == b"def add(a, b):\n    return a + b\n"
+
+
+class Router(FakeFM):
+    """A model that decides the goal is big, splits it into parts when asked, and researches each part into steps."""
+
+    def __init__(self, parts):
+        super().__init__(lambda t: None)
+        self.parts, self.sessions = parts, []
+
+    def run(self, prompt, tools, instructions="", max_tool_calls=8, temperature=None):
+        t = {x.name: x.handler for x in tools}
+        self.sessions.append(sorted(t))
+        if "decompose_task" in t:
+            t["decompose_task"]()
+        elif "add_task" in t:
+            for title in self.parts:
+                t["add_task"](title=title, detail="d", done_when="tests pass", big=False)
+        elif "add_actionable" in t:
+            t["add_actionable"](title="Write the code for " + prompt.split(".")[0][-20:], kind="code")
+        return {"content": "", "stopped": False, "calls": []}
+
+
+def test_a_big_goal_is_split_into_parts_before_anything_is_researched(env):
+    root, L, m = env
+    fm = Router(["Game state and collision", "Scoring", "Keyboard and screen"])
+    out = research_step(fm)(Ctx(L, m), m.tasks()[0])
+    assert out == {"ok": True, "summary": "split into 3 parts"}
+    kids = m.tasks()[0].children
+    assert [(k.id, k.kind, k.title) for k in kids] == [("1.1", "research", "Game state and collision"), ("1.2", "research", "Scoring"), ("1.3", "research", "Keyboard and screen")]
+    assert m.next_task().id == "1.1" and sorted(fm.sessions[0]) == ["decompose_task", "start_task"] and "add_task" in fm.sessions[1]
+
+
+def test_each_part_is_then_researched_into_code_steps(env):
+    root, L, m = env
+    fm = Router(["Scoring", "Restart"])
+    step = research_step(fm)
+    step(Ctx(L, m), m.tasks()[0])
+    out = step(Ctx(L, m), m.next_task())                                         # task 1.1, not top level: researched, not split again
+    assert out["ok"] and [k.kind for k in m.tasks()[0].children[0].children] == ["code"] and "decompose_task" not in sorted(fm.sessions[-1])
+    assert m.next_task().kind == "code" and m.next_task().id == "1.1.1"
+
+
+def test_a_small_goal_is_researched_directly_and_never_split(env):
+    _, L, m = env
+    fm = FakeFM(lambda t: t["add_actionable"](title="Write sub() in calc.py", kind="code"))
+    assert research_step(fm)(Ctx(L, m), m.tasks()[0])["ok"] and [k.title for k in m.tasks()[0].children] == ["Write sub() in calc.py"]
+
+
+def test_if_splitting_fails_the_goal_is_researched_instead(env):
+    _, L, m = env
+
+    class Broken(Router):
+        def run(self, prompt, tools, instructions="", max_tool_calls=8, temperature=None):
+            names = [x.name for x in tools]
+            if "add_task" in names:
+                return {"error": "guardrail", "message": "blocked", "calls": []}           # the splitter fails
+            return super().run(prompt, tools, instructions, max_tool_calls, temperature)
+
+    out = research_step(Broken(["x"]))(Ctx(L, m), m.tasks()[0])
+    assert out["ok"] and m.tasks()[0].children[0].kind == "code"                           # fell back to ordinary research

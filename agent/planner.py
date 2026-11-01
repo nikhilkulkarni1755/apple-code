@@ -35,7 +35,8 @@ class FMBackend:
                      _p("big", "boolean", "true if it still needs splitting", True)], add_task)
         prompt = (f"Request: {goal}\n" + (f"Context: {context}\n" if context else "")
                   + "Split this request into 3 to 10 small, concrete tasks, in order. A task is small if it can be finished in one sitting "
-                    "by editing a few files; otherwise set big=true. Call add_task for each task.")
+                    "by editing a few files; otherwise set big=true. Prefer parts that automated tests can check: keep rules, scores and "
+                    "state in plain functions that need no keyboard or screen. Call add_task for each task.")
         r = self.fm.run(prompt, [tool], INSTRUCTIONS, max_tool_calls=MAX_PER_SPLIT + 2)
         if "error" in r:
             raise PlanError(f"model error ({r['error']}): {r['message']}")
@@ -43,8 +44,8 @@ class FMBackend:
 
 
 class Planner:
-    def __init__(self, memory, backend, max_depth=3, max_tasks=200):
-        self.memory, self.backend, self.max_depth, self.max_tasks = memory, backend, max_depth, max_tasks
+    def __init__(self, memory, backend, max_depth=3, max_tasks=200, parent=None):
+        self.memory, self.backend, self.max_depth, self.max_tasks, self.parent = memory, backend, max_depth, max_tasks, parent
 
     def decompose(self, goal):
         """Split `goal` recursively, save the plan to MEMORY.md, and return the top-level Task objects (numbered).
@@ -56,7 +57,10 @@ class Planner:
         tasks = self._split(goal, "", 1, budget, seen, top=True)
         if not tasks:
             raise PlanError("the planner produced no tasks")
-        self.memory.add_plan(goal, tasks)
+        if self.parent:   # the parts become subtasks of the task that was being researched
+            self.memory.add_children(self.parent, tasks)
+        else:
+            self.memory.add_plan(goal, tasks)
         return tasks
 
     def _split(self, goal, context, depth, budget, seen, top=False):
@@ -80,7 +84,7 @@ class Planner:
                 continue
             seen.add(title.casefold())
             budget[0] -= 1
-            out.append(Task(title, field("detail", 200), field("done_when", 200)))
+            out.append(Task(title, field("detail", 200), field("done_when", 200), kind="research"))   # each part is researched, then coded
             if item.get("big") is True and depth < self.max_depth:
                 big.append(out[-1])
         for task in big:                            # siblings claim their titles before anything is nested under them

@@ -314,3 +314,21 @@ Each attempt leaves a `verify` record (ok, or rejected with the reasons). Two at
 **What has and has not been verified.** Verified on this Mac with a temporary home folder: install from a folder, from the zip, from the tarball through a real `curl … | sh -s --` pipe against a local web server, and through `npm exec` from the packed tarball; reinstall over the top; uninstall; and that the installed command works from an unrelated folder (`pytest -m net`, 8 tests). Not verified, because it needs publishing: the GitHub raw and archive URLs (the public repository does not yet contain this code) and the npm registry (`npm publish` needs your account). The installer needs the internet only to fetch `pytest` (and Python, if you use `uv` without one installed).
 
 **Not covered.** Windows and Linux (the model is Apple-only). A prebuilt, signed helper binary, which would remove the need for Apple's command line tools: it needs a release asset and a Developer ID signature. Checksum verification inside `install.sh` (the checksums are published, but the script does not check them yet).
+
+## 19. First real user run: a Chrome-dino game in the CLI (what failed, what changed)
+
+**The goal** (typed by a user, about 90 words): recreate Chrome's offline dinosaur game in the terminal, with jumping, scoring (+5 per cactus, +0.5 per second, floor at the end), `r` to restart and `e` to exit. **Result: nothing was built.** The research step produced one "step" called `web_search` (the name of one of its own tools), that step restated the goal, and the agent blocked with 0 code tasks.
+
+**Reproduced with the real model** and found four causes:
+1. The research prompt contained a filename example (`calc.py`). In an empty project the model read `calc.py`, which does not exist. Examples with real-looking names leak into unrelated projects.
+2. Tools were mistaken for tasks: `web_search`, `guide_title`, `add_subtract_research`.
+3. A multi-feature goal was treated as one piece of work: the model tried to build the whole game as one task ("Add main.py") and the worker failed four times. The decomposer and router (§14) existed but `solve` never used them.
+4. A blocked agent was a dead end: running the same goal again did nothing.
+
+**Changes.**
+- The research prompt now lists the project's real files, or says "The project has no files yet", instead of making the model discover them with tools, and has no example filename. This follows Apple's own advice (TN3193): when the model always needs some information, retrieve it yourself and put it in the prompt.
+- The agent's own notes (`MEMORY.md`, `.agents/`) are hidden from the model's file listing and search; reading a named file still works.
+- Step titles that are tool names, or look like identifiers (`snake_case`), are dropped.
+- **Big goals are split first.** The first research task of a goal asks the router whether it is big. If so, the planner splits it into parts that become subtasks, each marked for research, and each part is then researched into small coded steps. The splitter is told to prefer parts that automated tests can check, with rules, scores and state in plain functions that need no keyboard or screen, because the worker's evidence is pytest.
+- Running the same goal again retries its blocked tasks. A new goal is added after the finished work (§16).
+- The blocked message now says what to do: try a smaller, more specific goal.

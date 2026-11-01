@@ -215,6 +215,17 @@ class Memory:
                                            + (f"Next: {nxt.id} {nxt.title}" if nxt else f"Nothing left to do; {blocked} blocked." if blocked else "All tasks done."))
         return self._save(pre, secs)
 
+    def unblock(self):
+        """Put every blocked task back to todo so it is tried again. Returns how many."""
+        pre, secs = self._load()
+        plan = parse_tasks(secs.get("Task plan", ""))
+        blocked = [t for t in _walk(plan) if t.status == "blocked"]
+        for t in blocked:
+            t.status = "todo"
+        if blocked:
+            self._save_plan(pre, secs, plan)
+        return len(blocked)
+
     def next_task(self):
         return next((t for t in _walk(self.tasks()) if not t.children and t.status in ("todo", "doing")), None)
 

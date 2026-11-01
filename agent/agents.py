@@ -87,6 +87,9 @@ class AgentQueue:
                 memory.add_plan(text, [Task(f"Research: {text[:60]}", text, kind="research")])
             if row["status"] in ("done", "blocked", "failed"):
                 self._set(ROOT, status="queued", attempts=0, error=None)
+        elif row["status"] in ("blocked", "failed"):   # the same goal again: try what was blocked once more
+            memory.unblock()
+            self._set(ROOT, status="queued", attempts=0, error=None)
         return ROOT
 
     def spawn(self, parent, goal):

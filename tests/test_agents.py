@@ -382,3 +382,34 @@ def test_a_step_that_returns_nothing_blocks_its_task_instead_of_pretending_it_wo
     q.start("goal")
     q.run()
     assert q.memory("root").tasks()[0].status == "blocked" and status(q) == {"root": "blocked"}
+
+
+def test_running_the_same_goal_again_retries_what_was_blocked(ws):
+    root, L = ws
+    attempts = []
+
+    def step(ctx, task):
+        attempts.append(task.title)
+        return {"ok": len(attempts) > 1, "summary": "second time lucky"}        # fails the first time only
+
+    q = AgentQueue(L, task_runner(step))
+    q.start("goal")
+    q.run()
+    assert status(q) == {"root": "blocked"} and q.memory("root").tasks()[0].status == "blocked"
+    q.start("goal")                                                           # same goal again
+    assert status(q) == {"root": "queued"}
+    q.run()
+    assert len(attempts) == 2 and status(q) == {"root": "done"} and q.memory("root").tasks()[0].status == "done"
+    q.start("goal")
+    q.run()
+    assert len(attempts) == 2                                                  # finished work is not repeated
+
+
+def test_memory_can_put_blocked_tasks_back_to_todo(ws):
+    _, L = ws
+    m = Memory(L)
+    m.add_plan("goal", [Task("a"), Task("b"), Task("c")])
+    m.mark("1", "blocked")
+    m.mark("3", "blocked")
+    m.complete("2", "done")
+    assert m.unblock() == 2 and [t.status for t in m.tasks()] == ["todo", "done", "todo"] and m.unblock() == 0

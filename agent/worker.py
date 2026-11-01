@@ -4,7 +4,7 @@ import json
 
 from .research import research_step
 from .runner import run_tests
-from .tools import make_tools
+from .tools import make_tools, visible_files
 from .verify import acceptance_args, failure_summary, frozen_check, is_test_path, judge, protected_violations, syntax_errors, unmentioned_deletions
 
 INSTRUCTIONS = ("You are a coding agent. Do the task by editing files with the tools. Write or extend a test that proves it works. "
@@ -41,7 +41,7 @@ def work_task(fm, ledger, memory, task, agent="root", web=None, max_iterations=4
 
     def prompt_for(failure, lean, it):
         head = [f"Task {task.id}: {task.title}", task.detail, f"Done when: {('pytest ' + args).strip()} passes with at least one test"]
-        extra = [] if lean else ["Files: " + ", ".join(sorted(ledger._snapshot())[:25]), "Notes:\n" + memory.context(900)]
+        extra = [] if lean else ["Files: " + (", ".join(visible_files(ledger)[:25]) or "none yet"), "Notes:\n" + memory.context(900)]
         for parts, failed in ((head + extra, failure), (head, failure), (head, failure[:300])):   # full, then without notes, then minimal
             label = "The tests currently fail:" if it == 1 else "Your last attempt failed:"
             text = "\n".join(p for p in parts + ([label + "\n" + failed] if failed else []) if p)

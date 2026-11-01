@@ -269,7 +269,9 @@ def test_a_goal_goes_through_research_work_and_verification_end_to_end(tmp_path)
 
     def model(prompt, tools):
         t = {x.name: x.handler for x in tools}
-        if "add_actionable" in t:
+        if "start_task" in t:
+            t["start_task"]()
+        elif "add_actionable" in t:
             t["list_files"]("*.py")
             t["add_actionable"](title="Add sub() to calc.py", detail="with a test in test_calc.py", kind="code", done_when="pytest test_calc.py")
         else:
@@ -324,6 +326,9 @@ def test_a_task_that_cannot_be_verified_blocks_the_agent_and_leaves_the_project_
     class Scripted(FakeFM):
         def run(self, prompt, tools, instructions="", max_tool_calls=8, temperature=None):
             t = {x.name: x.handler for x in tools}
+            if "start_task" in t:
+                t["start_task"]()
+                return {"content": "", "stopped": False, "calls": []}
             if "add_actionable" in t:
                 t["add_actionable"](title="Add sub() to calc.py", kind="code")
             else:

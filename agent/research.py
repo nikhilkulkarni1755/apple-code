@@ -1,20 +1,28 @@
 """Research a task before doing it: look through the codebase (and the web), then record what must be done as actionables.
 Every read the model makes is a ledger record (action, element) attributed to this task, so the research is accountable."""
 import difflib
+import re
 
 from .fm import Tool
 from .ledger import ActionError
 from .memory import KINDS, Task
-from .tools import _p, make_tools
+from .planner import FMBackend, Planner, route
+from .tools import _p, make_tools, visible_files
 
 READ_TOOLS = ("read_file", "list_files", "grep", "web_search", "fetch_url")
-INSTRUCTIONS = ("You prepare work for a coding agent. First look at the project with the tools, and search the web if you need outside "
-                "information. Then call add_actionable once for each step that must be done, in order. Write each title as a short "
-                "imperative phrase naming the file, like 'Add sub() to calc.py'. Use kind=code whenever the change can be made now; "
-                "use kind=research only for something the project files cannot tell you.")
+INSTRUCTIONS = ("You prepare work for a coding agent. Look at the project with the tools only if it has files, and search the web only if "
+                "you need outside information. Then call add_actionable once for each small step that must be done, in order (3 to 8 steps). "
+                "Write each title as a short imperative phrase that names the file it changes. Use kind=code whenever the change can be made "
+                "now; use kind=research only for something the project files cannot tell you. Steps are things to build, not tools to call.")
+_TOOL_NAMES = {*READ_TOOLS, "add_actionable", "spawn_subagent", "run_tests", "run_command", "replace_text", "insert_after", "create_file", "delete_file"}
 MAX_DEPTH = 3          # a research task nested deeper than this (id 1.1.1.1) is not researched further
 SAME = 0.7             # how alike two texts must be for one to count as a restatement of the other
 MAX_TASKS = 200
+
+
+def _junk_title(title):
+    """Small models sometimes answer with a tool's name ('web_search') or an identifier ('guide_title') instead of a step."""
+    return title.casefold() in _TOOL_NAMES or bool(re.fullmatch(r"[A-Za-z0-9]+(_[A-Za-z0-9]+)+", title))
 
 
 def _restates(item, task):
@@ -26,7 +34,7 @@ def _restates(item, task):
 def research(fm, ledger, memory, task_id, web=None, spawn=None, max_tool_calls=8):
     """Research the task `task_id` from MEMORY.md and add the actionables the model finds as its subtasks.
     `spawn(goal)`, if given, lets the model hand a self-contained part to a subagent.
-    Returns {'added': n, 'dropped': n restating the task or repeating a title, 'spawned': [ids], 'error': str or None}."""
+    Returns {'added': n, 'dropped': n restating the task, repeating a title, or naming a tool, 'spawned': [ids], 'error': str or None}."""
     task = next((t for t in _walk(memory.tasks()) if t.id == task_id), None)
     if task is None:
         raise ActionError(f"no task {task_id!r}")
@@ -44,15 +52,16 @@ def research(fm, ledger, memory, task_id, web=None, spawn=None, max_tool_calls=8
     if spawn is not None:
         tools.append(Tool("spawn_subagent", "Hand a large, self-contained part of this work to a new subagent with its own memory.",
                           [_p("goal", "string", "what the subagent should accomplish")], lambda goal: f"spawned {spawned.append(spawn(goal)) or spawned[-1]}"))
+    files = visible_files(ledger)
     prompt = (f"Task: {task.title}. {task.detail}\n" + (f"Done when: {task.done_when}\n" if task.done_when else "")
-              + f"Project notes:\n{memory.context(1200)}\n"
-                "Look at the project (list_files, grep, read_file), then call add_actionable for each step.")
+              + ("Files in the project: " + ", ".join(files[:25]) if files else "The project has no files yet.")
+              + f"\nProject notes:\n{memory.context(1200)}\nThen call add_actionable for each step.")
     with ledger.scope(task=task_id, kind="research"):
         r = fm.run(prompt, tools, INSTRUCTIONS, max_tool_calls=max_tool_calls)
         seen = {c.title.casefold() for c in task.children}
         kept = []
         for t in found:                     # no restatements of the task, and each title only once
-            if not _restates(t, task) and t.title.casefold() not in seen:
+            if not _restates(t, task) and not _junk_title(t.title) and t.title.casefold() not in seen:
                 kept.append(t)
                 seen.add(t.title.casefold())
         if kept:
@@ -76,9 +85,13 @@ def research_step(fm, web=None, worker=None):
             return worker(ctx, task) if worker else {"ok": False, "summary": "no worker to carry out code tasks yet"}
         if task.id.count(".") >= MAX_DEPTH or len(list(_walk(ctx.memory.tasks()))) >= MAX_TASKS:
             return {"ok": False, "summary": "research limit reached (too deep or too many tasks)"}
+        if "." not in task.id and not task.children:   # a whole goal: if it is big, split it into parts before researching each part
+            split = route(fm, task.detail or task.title, Planner(ctx.memory, FMBackend(fm), parent=task.id))
+            if split["route"] == "decompose" and split["tasks"]:
+                return {"ok": True, "summary": f"split into {len(split['tasks'])} parts"}
         r = research(fm, ctx.ledger, ctx.memory, task.id, web, ctx.spawn)
         if r["added"] == 0 and not r["spawned"]:
-            return {"ok": False, "summary": r["error"] or ("research only restated the task" if r["dropped"] else "research found nothing to do")}
+            return {"ok": False, "summary": r["error"] or ("research gave nothing new; try a smaller, more specific goal" if r["dropped"] else "research found nothing to do")}
         return {"ok": True, "summary": f"{r['added']} actionables, {len(r['spawned'])} subagents" + (f" ({r['error']})" if r["error"] else "")}
 
     return step

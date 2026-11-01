@@ -1,7 +1,7 @@
 import pytest
 
 from agent.ledger import ActionError, Ledger
-from agent.memory import Memory
+from agent.memory import Memory, Task
 from agent.planner import MAX_GOAL, MAX_PER_SPLIT, FMBackend, PlanError, Planner, route
 from tests.test_ledger import snapshot
 
@@ -51,7 +51,7 @@ def test_the_plan_is_in_memory_for_the_next_session(env):
     Planner(m, Scripted(lambda g, c: [t("One", done_when="pytest passes"), t("Two")])).decompose("Make a thing")
     heir = Memory(Ledger(root))
     assert heir.next_task().title == "One" and heir.next_task().done_when == "pytest passes"
-    assert "Next tasks:\n- [ ] 1 One" in heir.context()
+    assert "Next tasks:\n- [ ] 1 [research] One" in heir.context()
 
 
 def test_decomposing_is_undoable(env):
@@ -202,3 +202,32 @@ def test_a_title_is_used_once_across_the_whole_plan(env):
     tree = {"goal": [t("Parser", big=True), t("Lexer")], "Parser": [t("Lexer"), t("Grammar"), t("parser")]}
     out = Planner(m, Scripted(lambda g, c: tree[g.split(".")[0]])).decompose("goal")
     assert titles(out) == [("Parser", ["Grammar"]), "Lexer"]
+
+
+def test_a_goal_can_be_split_under_an_existing_task_and_its_parts_are_to_be_researched(env):
+    root, _, m = env
+    m.add_plan("Build a game", [Task("Research: build a game", "A game", kind="research")])
+    out = Planner(m, Scripted(lambda g, c: [t("Rules"), t("Scoring", big=True)] if g.startswith("Build") else [t("Add points"), t("Floor it")]), parent="1").decompose("Build a game")
+    got = m.tasks()
+    assert [x.id for x in got] == ["1"] and [(c.id, c.kind) for c in got[0].children] == [("1.1", "research"), ("1.2", "research")]
+    assert [c.id for c in got[0].children[1].children] == ["1.2.1", "1.2.2"] and [x.title for x in out] == ["Rules", "Scoring"]
+
+
+def test_splitting_under_a_missing_task_is_rejected_and_changes_nothing(env):
+    root, _, m = env
+    before = snapshot(root)
+    with pytest.raises(ActionError):
+        Planner(m, Scripted(lambda g, c: [t("x")]), parent="7").decompose("goal")
+    assert snapshot(root) == before
+
+
+def test_the_splitting_prompt_asks_for_testable_parts():
+    seen = []
+
+    class Spy:
+        def run(self, prompt, tools, instructions="", max_tool_calls=8, temperature=None):
+            seen.append(prompt)
+            return {"content": "", "stopped": False, "calls": []}
+
+    FMBackend(Spy()).split("Build a terminal game", "")
+    assert "automated tests" in seen[0] and "no keyboard or screen" in seen[0]
