@@ -97,3 +97,30 @@ Planned edits for the next cycle (one PR each): (K) pair a code step with the te
 ### Edits made after rerun round 3
 - **K (PR #12):** a code step and the tests for the same module (`slugs.py` / `tests/test_slugs.py`) pair up in any order and position.
 - **J:** each step's detail gets `Spec: <the goal's sentences that name the step's files>` (at most 700 characters), so the worker sees the exact wording (`report(inventory)`, `name: qty strings`, `lowercase, joined by hyphens`) in the task text itself.
+
+## Rerun round 4 (after edits K, J) — P1, P2, P3 once each
+| Prompt | Result | Time | What was verified |
+|---|---|---|---|
+| P1 | **solved** (independent check passed) | 239 s | `slugs.py` (1.1) and `words.py` (1.3) verified on the first attempt each; two later test-only steps were blocked but the code was already correct |
+| P2 | not solved | 346 s | nothing: `Inventory.add()` took 2 positional arguments while the model's own tests passed 3 (`add(name, qty)`); then `unterminated triple-quoted string` / stray prose in the files |
+| P3 | not solved | 225 s | `tokens.py` verified on the first attempt; `calc.py` failed 4 times (missing `tokenize` import, then `unexpected indent`) |
+
+Observations:
+1. A step can now pass on its first attempt (P1 both steps, P2 earlier, P3 `tokens.py`), which did not happen before round 3. When it does, the run is short (239 s).
+2. The remaining failures are the 3B model writing malformed or inconsistent code: syntax errors in the file it just wrote (unterminated docstring, `unexpected indent`, prose in the file), a method signature that does not match its own test, a missing import in the code file (the import hint is worded for test files). The spec text in the step did not stop the signature mismatch in P2.
+3. After a verified code step the plan-the-rest passes mostly add test-only steps for code that already passes (P1 1.5, 1.6; blocked with `no new test passes`), so they cost attempts without changing the result.
+
+## Summary across the rounds
+| Run | P1 | P2 | P3 |
+|---|---|---|---|
+| Before the flat planner (research on, goal cut to 200 chars) | 0 of 8 | – | – |
+| Flat planner, fixed titles/dedupe (PR #2) | solved (cap) | not solved | not solved |
+| Round 1 (after C, B, A) | not solved | not solved | not solved |
+| Round 2 (after D, E, F) | not solved | not solved | not solved |
+| Round 3 (after G, H, I) | not solved | not solved (closest: 2 modules written, verified) | not solved |
+| Round 4 (after K, J) | **solved, 239 s** | not solved | not solved |
+
+One run per cell, so single results are noisy. What the evidence supports:
+- Planning is no longer the bottleneck (complete, flat, round 2 present, no filler since round 3).
+- The loop is now limited by what the model writes inside one step, not by the task list.
+- Ideas not done, in order of expected value: (1) make the plan-the-rest step skip a code step whose module already passes (it adds test-only steps that cannot be verified); (2) widen the import hint to code files and extend it to `ImportError`; (3) when a file the task wrote has a syntax error, put the whole broken file (not only the line) in the next prompt; (4) hard `context_overflow` still happens once per run on P3; the soft guard counts only before a tool call; (5) repeat each prompt 3 times to measure the real solve rate before more tuning.
