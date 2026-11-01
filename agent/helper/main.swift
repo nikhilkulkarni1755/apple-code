@@ -29,17 +29,20 @@ final class Bridge: @unchecked Sendable {
     var calls = 0
     var used = 0             // running estimate of tokens in the session: instructions + tools + prompt + every tool call and result
     var reached = false
+    let gate = Gate()
     init(maxCalls: Int, budget: Int) { self.maxCalls = maxCalls; self.budget = budget }
 
     // The running count undercounts the framework's own formatting by 5 to 20% (measured), so it is scaled up: better to wind down a
     // little early than a little late.
     static let safety = 1.25
     var corrected: Int { Int(Double(used) * Bridge.safety) }
+    // One more tool result (up to 2,500 characters) and the final answer still come after the last check; leave room for them below the budget.
+    static let reserve = 900
 
     func add(_ tokens: Int) {
         lock.lock(); defer { lock.unlock() }
         used += tokens
-        if budget > 0 && corrected >= budget { reached = true }
+        if budget > 0 && corrected + Bridge.reserve >= budget { reached = true }
     }
 
     func call(name: String, args: Any) throws -> String {
@@ -52,6 +55,15 @@ final class Bridge: @unchecked Sendable {
     }
 }
 
+// The model may ask for several tools at once. They are run one at a time, and the budget is checked inside the gate, after the
+// earlier calls have been counted: otherwise every call of the batch passes the check before the first result is added.
+actor Gate {
+    var busy = false
+    var waiting: [CheckedContinuation<Void, Never>] = []
+    func enter() async { if busy { await withCheckedContinuation { waiting.append($0) } } else { busy = true } }
+    func leave() { if waiting.isEmpty { busy = false } else { waiting.removeFirst().resume() } }
+}
+
 struct BridgeTool: Tool {
     let name: String
     let description: String
@@ -59,14 +71,21 @@ struct BridgeTool: Tool {
     let bridge: Bridge
 
     func call(arguments: GeneratedContent) async throws -> String {
-        if bridge.reached { throw StopError() }   // the budget was crossed: no more tool calls, the session winds down here
-        let args = try JSONSerialization.jsonObject(with: Data(arguments.jsonString.utf8))
-        let result = try bridge.call(name: name, args: args)
-        if bridge.budget > 0 {
-            let model = SystemLanguageModel.default
-            bridge.add(((try? await model.tokenCount(for: arguments.jsonString)) ?? 0) + ((try? await model.tokenCount(for: result)) ?? 0))
+        await bridge.gate.enter()
+        do {
+            if bridge.reached { throw StopError() }   // the budget was crossed: no more tool calls, the session winds down here
+            let args = try JSONSerialization.jsonObject(with: Data(arguments.jsonString.utf8))
+            let result = try bridge.call(name: name, args: args)
+            if bridge.budget > 0 {
+                let model = SystemLanguageModel.default
+                bridge.add(((try? await model.tokenCount(for: arguments.jsonString)) ?? 0) + ((try? await model.tokenCount(for: result)) ?? 0))
+            }
+            await bridge.gate.leave()
+            return result
+        } catch {
+            await bridge.gate.leave()
+            throw error
         }
-        return result
     }
 }
 
