@@ -57,3 +57,19 @@ Planned edits for the next cycle (one PR each): (D) normalize the model's `run_t
 - **D (PR #6):** `run_tests` drops a leading `pytest` / `python -m pytest` and finds a bare test file under `tests/`.
 - **E:** when a failure is `NameError: name 'X' is not defined` and a top-level module defines `X`, the next prompt gets `Hint: add \`from <module> import X\` at the top of the test file`.
 - **F (code and its tests are one step):** the planner is asked for this in so many words, but the model ignored the instruction on two replays (it still listed code and test steps separately). So the harness does it: a `test` step that comes right after a `code` step in the same planning pass is appended to that step's detail (`Also write tests ...`) and no longer a step of its own. A test step with no code step before it (tests for existing code) stays a step. The instruction was left as it was.
+
+## Rerun round 2 (after edits D, E, F) — P1, P2, P3 once each
+| Prompt | Result | Time | What was verified |
+|---|---|---|---|
+| P1 | not solved (cap) | 795 s | `word_count` + its tests verified (1.2); `slugify` blocked after 4 attempts; the plan-the-rest steps added `test_slugs.py` / `test_words.py` steps |
+| P2 | not solved (cap) | 794 s | nothing; a garbage step `finalize round 1 and round 2` (no file) was planned |
+| P3 | not solved (cap) | 784 s | nothing; 1 handoff, 1 hard `context_overflow`; round 2 steps were planned by the re-plan (1.4, 1.5) but not reached |
+
+Observations:
+1. **The planning edits work.** Both rounds are planned in every run and the plan-the-rest step ran 1-2 times without nesting. Steps are now merged (code + its tests): P1 got `write slugify in slugs.py` / `write word_count in words.py` as single steps.
+2. **Retries repeat themselves.** P2 task 1.1: 4 attempts, 1 distinct failure text (`assert 1 == 5` for `count('apple')`). P1 `slugify` returned `helloworld` (spaces removed, no hyphen) on attempts 1 and 2 in this run and in every earlier run. With the same prompt and the model's default sampling the 3B model keeps its answer.
+3. **Syntax errors from the model dominate P3.** 12 of the 19 rejections were `Syntax error: tokens.py:NN: invalid syntax / unexpected indent`, and the message does not show the line, so the model cannot see what is wrong at line NN.
+4. **Steps with no file still get through** (`finalize round 1 and round 2`, kind code).
+5. Still open: logic the model gets wrong repeatedly (`slugify`), unicode arrows (`→`) in code, one hard `context_overflow` per P3 run.
+
+Planned edits for the next cycle (one PR each): (G) sample at a higher temperature from the second attempt on; (H) show the offending source line in a syntax error; (I) drop any step that names no file.

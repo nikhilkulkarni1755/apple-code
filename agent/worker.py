@@ -17,6 +17,7 @@ INSTRUCTIONS = ("You are a coding agent. Do the task by editing files with the t
                 "Use replace_text with the exact existing text, insert_after, or create_file. Never change existing tests. "
                 "Call run_tests when you are done, then reply DONE.")
 TOOLS = ("read_file", "list_files", "grep", "create_file", "replace_text", "insert_after", "run_tests")
+RETRY_TEMPERATURE = 0.8   # a retry with the same prompt and the default sampling often gives the same wrong answer: vary it from the second attempt on
 RESERVE = 2500   # tokens left free for tool results and the answer
 
 
@@ -95,7 +96,8 @@ def work_task(fm, ledger, memory, task, agent="root", web=None, max_iterations=4
     last, stalls, lean, budget_hit = ["nothing was attempted"], 0, False, False
     for it in range(1, max_iterations + 1):
         with ledger.scope(task=task.id, kind="code", iteration=it):
-            r = fm.run(prompt_for(failure, lean, it, budget_hit), tools, INSTRUCTIONS, max_tool_calls=max_tool_calls, budget_tokens=BUDGET)
+            r = fm.run(prompt_for(failure, lean, it, budget_hit), tools, INSTRUCTIONS, max_tool_calls=max_tool_calls,
+                       temperature=RETRY_TEMPERATURE if it > 1 else None, budget_tokens=BUDGET)
             ledger.log_session(r)
         if r.get("reason") == "budget":
             budget_hit = True
