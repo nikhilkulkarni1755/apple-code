@@ -3,6 +3,9 @@ The harness runs the tests and judges the evidence (agent/verify.py), so the mod
 import json
 
 from .evidence import gather
+from .handoff import BUDGET, MAX_CONTINUATIONS, continuation_depth, looked_at, note
+from .ledger import ActionError
+from .memory import Task
 from .research import research_step
 from .runner import run_tests
 from .tools import make_tools, visible_files
@@ -47,8 +50,14 @@ def work_task(fm, ledger, memory, task, agent="root", web=None, max_iterations=4
             ledger.log_read("verify", task.id, {"iteration": iteration, "ok": verdict, "run": seq},
                             error=None if verdict else (extra or "not verified"))
 
-    def prompt_for(failure, lean, it):
+    earlier = memory.handoff(task.id)                # a note left by an agent that ran out of room on this task or its parent
+
+    def prompt_for(failure, lean, it, tight=False):
         head = [f"Task {task.id}: {task.title}", task.detail, f"Done when: {('pytest ' + args).strip()} passes with at least one test"]
+        if earlier:
+            head.append("Handoff from the agent before you:\n" + earlier)
+        if tight:
+            head.append("The last session ran out of room. Do ONE small piece, call run_tests, and stop.")
         extra = [] if lean else [facts, "Notes:\n" + memory.context(900)]
         for parts, failed in ((head + extra, failure), (head, failure), (head, failure[:300])):   # full, then without notes, then minimal
             label = "The tests currently fail:" if it == 1 else "Your last attempt failed:"
@@ -61,15 +70,17 @@ def work_task(fm, ledger, memory, task, agent="root", web=None, max_iterations=4
     baseline = judge(args, code, out, err, edited=True)
     passed_before = baseline.summary.get("passed", 0)
     failure = "" if baseline.ok else failure_summary(out) or "; ".join(baseline.reasons)
-    last, stalls, lean = ["nothing was attempted"], 0, False
+    last, stalls, lean, budget_hit = ["nothing was attempted"], 0, False, False
     for it in range(1, max_iterations + 1):
         with ledger.scope(task=task.id, kind="code", iteration=it):
-            r = fm.run(prompt_for(failure, lean, it), tools, INSTRUCTIONS, max_tool_calls=max_tool_calls)
+            r = fm.run(prompt_for(failure, lean, it, budget_hit), tools, INSTRUCTIONS, max_tool_calls=max_tool_calls, budget_tokens=BUDGET)
             ledger.log_session(r)
-        notes = []
+        if r.get("reason") == "budget":
+            budget_hit = True
+            say(f"  attempt {it}: used {r.get('estimated') or r.get('tokens')} of {r.get('context', 8192)} tokens: wound down")
         if "error" in r:
             lean = lean or r["error"] == "context_overflow"
-            notes.append(f"the model stopped early ({r['error']})")
+            budget_hit = budget_hit or r["error"] == "context_overflow"   # the hard limit was hit before the soft one: the same problem
         rows = _edits_of_the_task(ledger, agent, task.id, it)
         bad = protected_violations(ledger.root, originals) + unmentioned_deletions(rows, text)
         if bad:
@@ -111,8 +122,33 @@ def work_task(fm, ledger, memory, task, agent="root", web=None, max_iterations=4
         failure, last = new, verdict.reasons
         if stalls >= 2:
             break
+    if budget_hit and continuation_depth(task.title) < MAX_CONTINUATIONS:
+        handed = _hand_off(ledger, memory, task, agent, originals, last, failure, say)
+        if handed:
+            return handed
     ledger.undo_task(agent, task.id)
     return {"ok": False, "summary": f"not verified after {it} attempt(s): {'; '.join(last)[:200]}; edits rolled back"}
+
+
+def _hand_off(ledger, memory, task, agent, originals, problems, failure, say):
+    """The task did not fit in the context window. Keep the partial work if it is safe (it parses and the original tests still pass),
+    write down what is done and what is left, and queue a continuation task. Returns the step result, or None if that is not possible."""
+    mine = _edits_of_the_task(ledger, agent, task.id)
+    safe = (not syntax_errors(ledger.root, [r["path"] for r in mine]) and not protected_violations(ledger.root, originals)
+            and frozen_check(ledger.root, originals)[0])
+    done = ", ".join(sorted({r["path"] for r in mine})) if safe and mine else ""
+    if not safe:
+        ledger.undo_task(agent, task.id)
+    text = note(task, done=done, problem=failure or "; ".join(problems), looked=looked_at(ledger, agent, task.id))
+    try:
+        memory.add_children(task.id, [Task(f"Continue: {task.title}", f"Finish what the handoff for {task.id} says is left.", task.done_when, kind="code")])
+    except ActionError:
+        return None   # the task is not in MEMORY.md (a one-off run): there is nowhere to queue the rest
+    memory.add_handoff(task.id, text)
+    with ledger.scope(task=task.id, kind="code"):
+        ledger.log_read("handoff", task.id, {"kept": bool(done)}, text)
+    say(f"  handed off: {'partial work kept' if done else 'partial work rolled back'}; the rest is a new task")
+    return {"ok": True, "summary": f"handed off: ran out of room ({'work kept' if done else 'work rolled back'}); the rest is queued as a new task"}
 
 
 def _fits(fm, tools, prompt):

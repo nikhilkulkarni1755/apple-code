@@ -3,6 +3,8 @@
 //    "max_tool_calls":8,"temperature":0.2}
 //     -> {"event":"tool_call","id":1,"name":"..","args":{..}}   (reply on stdin: {"id":1,"result":".."})
 //     -> {"event":"done","content":"..","stopped":false} | {"event":"error","kind":"context_overflow|guardrail|other","message":".."}
+//   a run request may carry "budget_tokens": the session is stopped at the next tool call once about that many tokens are used,
+//   and the done event then says "reason":"budget" (or "calls" when max_tool_calls ended it); "estimated" is the running count.
 //   {"cmd":"status"} -> {"event":"status","availability":"available" or the reason the model cannot be used}
 //   {"cmd":"count","instructions":"..","prompt":"..","tools":[..]} -> {"event":"count","tools":N,"instructions":N,"prompt":N,"context":N}
 import Foundation
@@ -23,8 +25,22 @@ func parse(_ line: String) -> [String: Any]? {
 final class Bridge: @unchecked Sendable {
     let lock = NSLock()
     let maxCalls: Int
+    let budget: Int          // stop the session once about this many tokens are used (0 = no budget)
     var calls = 0
-    init(maxCalls: Int) { self.maxCalls = maxCalls }
+    var used = 0             // running estimate of tokens in the session: instructions + tools + prompt + every tool call and result
+    var reached = false
+    init(maxCalls: Int, budget: Int) { self.maxCalls = maxCalls; self.budget = budget }
+
+    // The running count undercounts the framework's own formatting by 5 to 20% (measured), so it is scaled up: better to wind down a
+    // little early than a little late.
+    static let safety = 1.25
+    var corrected: Int { Int(Double(used) * Bridge.safety) }
+
+    func add(_ tokens: Int) {
+        lock.lock(); defer { lock.unlock() }
+        used += tokens
+        if budget > 0 && corrected >= budget { reached = true }
+    }
 
     func call(name: String, args: Any) throws -> String {
         lock.lock(); defer { lock.unlock() }
@@ -43,8 +59,14 @@ struct BridgeTool: Tool {
     let bridge: Bridge
 
     func call(arguments: GeneratedContent) async throws -> String {
+        if bridge.reached { throw StopError() }   // the budget was crossed: no more tool calls, the session winds down here
         let args = try JSONSerialization.jsonObject(with: Data(arguments.jsonString.utf8))
-        return try bridge.call(name: name, args: args)
+        let result = try bridge.call(name: name, args: args)
+        if bridge.budget > 0 {
+            let model = SystemLanguageModel.default
+            bridge.add(((try? await model.tokenCount(for: arguments.jsonString)) ?? 0) + ((try? await model.tokenCount(for: result)) ?? 0))
+        }
+        return result
     }
 }
 
@@ -81,7 +103,7 @@ func handle(_ req: [String: Any]) async {
         emit(["event": "status", "availability": "\(model.availability)"])
         return
     }
-    let bridge = Bridge(maxCalls: req["max_tool_calls"] as? Int ?? 8)
+    let bridge = Bridge(maxCalls: req["max_tool_calls"] as? Int ?? 8, budget: req["budget_tokens"] as? Int ?? 0)
     var session: LanguageModelSession? = nil
     do {
         let tools = try makeTools(req["tools"] as? [[String: Any]] ?? [], bridge: bridge)
@@ -93,12 +115,16 @@ func handle(_ req: [String: Any]) async {
                   "context": model.contextSize])
             return
         }
+        if bridge.budget > 0 {
+            bridge.add(try await model.tokenCount(for: Instructions(instructions)) + model.tokenCount(for: tools as [any Tool]) + model.tokenCount(for: prompt))
+        }
         session = LanguageModelSession(model: model, tools: tools, instructions: instructions)
         let options = GenerationOptions(temperature: req["temperature"] as? Double)
         let r = try await session!.respond(to: prompt, options: options)
-        emit(["event": "done", "content": r.content, "stopped": false, "tokens": await used(session), "context": model.contextSize])
+        emit(["event": "done", "content": r.content, "stopped": false, "tokens": await used(session), "estimated": bridge.corrected, "context": model.contextSize])
     } catch let e as LanguageModelSession.ToolCallError where e.underlyingError is StopError {
-        emit(["event": "done", "content": "", "stopped": true, "tokens": await used(session), "context": model.contextSize])
+        emit(["event": "done", "content": "", "stopped": true, "reason": bridge.reached ? "budget" : "calls",
+              "tokens": await used(session), "estimated": bridge.corrected, "context": model.contextSize])
     } catch let e as LanguageModelSession.GenerationError {
         var kind = "other"
         if case .exceededContextWindowSize = e { kind = "context_overflow" }

@@ -247,6 +247,7 @@ class Ledger:
         """Record how much of the context window a model session used, and the error it ended with, if any."""
         if "tokens" in result:
             self.log_read("session", self._scope["kind"] or "-", {"tokens": result["tokens"], "context": result.get("context"),
+                                                                    "estimated": result.get("estimated"), "reason": result.get("reason"),
                                                                     "tool_calls": len(result.get("calls", []))})
         if "error" in result:
             self.log_read("model_error", result["error"], {"message": str(result.get("message", ""))[:200]}, error=result["error"])

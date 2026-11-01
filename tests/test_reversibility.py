@@ -114,7 +114,7 @@ def test_every_state_changing_tool_is_reversible(proj, op):
 def test_failing_and_rejected_calls_leave_nothing_to_undo(proj):
     root, L, t = proj
     before = snapshot(root)
-    for call in (lambda: t["replace_text"](path="calc.py", old="nope", new="x"), lambda: t["create_file"](path="calc.py", content="x"),
+    for call in (lambda: t["replace_text"](path="calc.py", old="nope", new="x"), lambda: t["create_file"](path="../escape.txt", content="x"),
                  lambda: t["delete_file"](path="ghost.py"), lambda: t["run_command"]("sudo ls"), lambda: t["run_command"]("exit 3"),
                  lambda: t["run_tests"]("-k nomatch")):
         try:

@@ -16,17 +16,19 @@ class FakeFM:
 
     def __init__(self, attempts, context=8192):
         self.attempts, self.prompts, self.tool_names, self.context, self.calls = list(attempts), [], [], context, 0
+        self.budgets = []
 
     def count(self, tools, instructions="", prompt=""):
         return {"tools": 100, "instructions": 50, "prompt": len(prompt), "context": self.context}
 
-    def run(self, prompt, tools, instructions="", max_tool_calls=8, temperature=None):
+    def run(self, prompt, tools, instructions="", max_tool_calls=8, temperature=None, budget_tokens=None):
         self.prompts.append(prompt)
+        self.budgets.append(budget_tokens)
         self.tool_names.append([t.name for t in tools])
         attempt = self.attempts[min(self.calls, len(self.attempts) - 1)]
         self.calls += 1
         out = attempt({t.name: t.handler for t in tools}, prompt)
-        return out or {"content": "DONE", "stopped": False, "calls": []}
+        return out if isinstance(out, dict) else {"content": "DONE", "stopped": False, "calls": []}     # an attempt's other return values are tool results
 
 
 def good(t, prompt=None):                       # a correct, test-first change
@@ -117,6 +119,15 @@ def test_editing_an_existing_test_to_make_it_pass_is_undone_and_reported(env):
     assert out["ok"] and "assert add(1, 2) == 3" in (root / "test_calc.py").read_text() and "return a + b" in (root / "calc.py").read_text()
     assert "Your edits were undone because you changed existing test code in test_calc.py" in fm.prompts[1]
     assert [(r["iteration"], r["status"]) for r in L.list() if r["action"] == "verify"] == [(1, "rejected"), (2, "ok")]
+
+
+def test_rewriting_an_existing_test_file_with_create_file_cannot_weaken_it(env):
+    """create_file now replaces files; the whole-file comparison still catches a rewrite that drops an assertion."""
+    root, L, m, task = env
+    weaken = lambda t, p=None: (t["create_file"](path="test_calc.py", content="from calc import add\n\n\ndef test_add():\n    assert True\n"),
+                                t["insert_after"](path="calc.py", anchor="return a + b", text="\n\ndef sub(a, b):\n    return a - b"))
+    fm, out = work(env, [weaken, good], max_iterations=2)
+    assert "changed existing test code in test_calc.py" in fm.prompts[1] and out["ok"] and "assert add(1, 2) == 3" in (root / "test_calc.py").read_text()
 
 
 def test_deleting_an_existing_test_file_is_undone(env):
@@ -250,6 +261,136 @@ def test_a_project_that_is_already_red_is_not_held_to_the_red_check(env):
     assert out["ok"]                                                          # the existing failing test is the proof
 
 
+# ------------------------------------------------------------------ running out of room (the 7K budget)
+BUDGET_STOP = {"content": "", "stopped": True, "calls": [], "reason": "budget", "tokens": 7300, "estimated": 7200, "context": 8192}
+
+
+def runs_out(then):
+    """An attempt that does some work and is stopped by the budget."""
+    return lambda t, p=None: (then(t), BUDGET_STOP)[1]
+
+
+def broken_code(t, p=None):
+    t["insert_after"](path="calc.py", anchor="return a + b", text="\n\ndef sub(a, b)\n    return a - b")            # a syntax error
+
+
+def test_every_session_is_given_the_7k_budget(env):
+    from agent.handoff import BUDGET
+    root, L, m, task = env
+    fm, _ = work(env, [good])
+    assert BUDGET == 7168 and fm.budgets == [7168]
+
+
+def test_a_session_stopped_by_the_budget_whose_work_checks_out_is_simply_complete(env):
+    root, L, m, task = env
+    lines = []
+    fm, out = work(env, [runs_out(good)], say=lines.append)
+    assert out["ok"] and out["summary"].startswith("verified") and m.tasks()[0].children == []
+    assert "  attempt 1: used 7200 of 8192 tokens: wound down" in lines
+
+
+def test_a_budget_stop_tells_the_next_session_to_work_in_smaller_pieces(env):
+    root, L, m, task = env
+    fm, out = work(env, [runs_out(lambda t: None), good])
+    assert out["ok"] and "ran out of room" in fm.prompts[1] and "ran out of room" not in fm.prompts[0]
+
+
+def test_when_attempts_run_out_after_a_budget_stop_the_rest_is_queued_with_a_handoff_note(env):
+    root, L, m, task = env
+    runs = []
+    fm, out = work(env, [runs_out(buggy), runs_out(lambda t: None)], max_iterations=2, say=runs.append)
+    assert out["ok"] and out["summary"].startswith("handed off: ran out of room (work kept)") and "queued as a new task" in out["summary"]
+    kid = m.tasks()[0].children[0]
+    assert (kid.id, kid.kind, kid.title, kid.status) == ("1.1", "code", "Continue: Add sub() to calc.py", "todo")
+    note = m.handoff("1")
+    assert "Task: Add sub() to calc.py" in note and "Done so far: calc.py, test_calc.py" in note and "Still wrong:" in note and "ran out of room" in note
+    assert "def sub" in (root / "calc.py").read_text()                                                                          # the partial work was kept
+    assert m.next_task().id == "1.1" and "  handed off: partial work kept; the rest is a new task" in runs
+    assert [r["action"] for r in L.list() if r["action"] == "handoff"] == ["handoff"] and L.verify() == []
+
+
+def test_partial_work_that_does_not_parse_is_rolled_back_not_handed_on(env):
+    root, L, m, task = env
+    before = snapshot(root)
+    fm, out = work(env, [runs_out(broken_code), runs_out(lambda t: None)], max_iterations=2)
+    without_notes = lambda snap: {k: v for k, v in snap.items() if k != "MEMORY.md"}
+    assert out["ok"] and "work rolled back" in out["summary"] and without_notes(snapshot(root)) == without_notes(before)
+    assert "Done so far: nothing kept" in m.handoff("1") and m.tasks()[0].children[0].title.startswith("Continue:")
+
+
+def test_the_next_agent_gets_the_handoff_in_its_prompt_and_finishes_the_job(tmp_path):
+    root = tmp_path / "ws"
+    root.mkdir()
+    (root / "calc.py").write_text(CALC)
+    (root / "test_calc.py").write_text(TESTS)
+    L = Ledger(root)
+    prompts = []
+
+    class Model(FakeFM):
+        def run(self, prompt, tools, instructions="", max_tool_calls=8, temperature=None, budget_tokens=None):
+            t = {x.name: x.handler for x in tools}
+            if "start_task" in t:
+                t["start_task"]()
+                return {"content": "", "stopped": False, "calls": []}
+            if "add_actionable" in t:
+                t["add_actionable"](title="Add sub() to calc.py", detail="with a test", kind="code")
+                return {"content": "", "stopped": False, "calls": []}
+            prompts.append(prompt)
+            self.calls += 1
+            if self.calls <= 3:                                   # the first agent: out of room each time (the stall rule ends it after 3 sessions)
+                buggy(t) if self.calls == 1 else None
+                return BUDGET_STOP
+            fix(t)                                                # the next agent: a fresh session that finishes
+            return {"content": "DONE", "stopped": False, "calls": []}
+
+    model = Model([])                                                 # one model for the whole run: it remembers how many sessions it has had
+    q = AgentQueue(L, task_runner(lambda ctx, task: research_and_work(ctx, task, model)))
+    q.start("Add a subtract function")
+    q.run()
+    m = Memory(L)
+    assert {r["id"]: (r["status"], r["error"]) for r in q.agents()} == {"root": ("done", None)} and m.next_task() is None
+    kids = {t.id: t for t in m.tasks()[0].children}
+    assert list(kids) == ["1.1"] and [c.id for c in kids["1.1"].children] == ["1.1.1"]                  # the continuation hangs under the task
+    assert "Handoff from the agent before you:" in prompts[-1] and "Task: Add sub() to calc.py" in prompts[-1]
+    assert "Handoff from the agent before you" not in prompts[0] and (root / "calc.py").read_text().endswith("return a - b\n")
+    assert "Handoffs" in (root / "MEMORY.md").read_text() and L.verify() == []
+
+
+def research_and_work(ctx, task, fm):
+    from agent.worker import solve_step
+    return solve_step(fm)(ctx, task)
+
+
+def test_a_continuation_of_a_continuation_is_the_limit(env):
+    root, L, m, task = env
+    m.add_plan("g", [Task("Continue: Continue: Add sub()", "d", kind="code")])
+    deep = m.tasks()[1]
+    fm = FakeFM([runs_out(buggy)])
+    out = work_task(fm, L, m, deep, max_iterations=1)
+    assert not out["ok"] and "edits rolled back" in out["summary"] and m.tasks()[1].children == [] and m.handoff("2") == ""
+
+
+def test_a_task_that_is_not_in_memory_is_blocked_instead_of_crashing(env):
+    root, L, m, task = env
+    stray = Task("Add sub() to calc.py", "x", kind="code", id="9")
+    out = work_task(FakeFM([runs_out(buggy)]), L, m, stray, max_iterations=1)
+    assert not out["ok"] and "edits rolled back" in out["summary"] and "def sub" not in (root / "calc.py").read_text()
+
+
+def test_hitting_apples_hard_limit_counts_as_running_out_of_room_too(env):
+    root, L, m, task = env
+    overflow = lambda t, p=None: (buggy(t), {"error": "context_overflow", "message": "too long", "calls": []})[1]
+    fm, out = work(env, [overflow], max_iterations=1)
+    assert out["ok"] and out["summary"].startswith("handed off")
+
+
+def test_other_failures_still_roll_back_and_block_as_before(env):
+    root, L, m, task = env
+    before = snapshot(root)
+    fm, out = work(env, [buggy], max_iterations=1)
+    assert not out["ok"] and snapshot(root) == before and m.tasks()[0].children == []
+
+
 # ------------------------------------------------------------------ giving up
 def test_when_every_attempt_fails_the_edits_are_rolled_back_and_can_be_restored(env):
     root, L, m, task = env
@@ -335,7 +476,7 @@ def test_a_goal_goes_through_research_work_and_verification_end_to_end(tmp_path)
             good(t)
 
     class Scripted(FakeFM):
-        def run(self, prompt, tools, instructions="", max_tool_calls=8, temperature=None):
+        def run(self, prompt, tools, instructions="", max_tool_calls=8, temperature=None, budget_tokens=None):
             self.prompts.append(prompt)
             model(prompt, tools)
             return {"content": "DONE", "stopped": False, "calls": []}
@@ -381,7 +522,7 @@ def test_a_task_that_cannot_be_verified_blocks_the_agent_and_leaves_the_project_
     start = snapshot(root)
 
     class Scripted(FakeFM):
-        def run(self, prompt, tools, instructions="", max_tool_calls=8, temperature=None):
+        def run(self, prompt, tools, instructions="", max_tool_calls=8, temperature=None, budget_tokens=None):
             t = {x.name: x.handler for x in tools}
             if "start_task" in t:
                 t["start_task"]()

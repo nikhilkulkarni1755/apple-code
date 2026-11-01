@@ -45,12 +45,13 @@ class FM:
         self._send({"cmd": "count", "instructions": instructions, "prompt": prompt, "tools": [t.spec() for t in tools]})
         return self._read()
 
-    def run(self, prompt, tools=(), instructions="", max_tool_calls=8, temperature=None):
+    def run(self, prompt, tools=(), instructions="", max_tool_calls=8, temperature=None, budget_tokens=None):
         """One fresh session. Tool calls are executed here (a failing handler returns its error to the model).
-        Returns {'content', 'stopped', 'calls': [(name, args, result)]} or {'error': kind, 'message', 'calls'}."""
+        Returns {'content', 'stopped', 'calls': [(name, args, result)]} or {'error': kind, 'message', 'calls'}.
+        With budget_tokens, the session is wound down at the next tool call once about that many tokens are used (result['reason'] == 'budget')."""
         by_name = {t.name: t for t in tools}
         self._send({"cmd": "run", "instructions": instructions, "prompt": prompt, "tools": [t.spec() for t in tools],
-                    "max_tool_calls": max_tool_calls, "temperature": temperature})
+                    "max_tool_calls": max_tool_calls, "temperature": temperature, "budget_tokens": budget_tokens})
         calls = []
         while True:
             msg = self._read()
@@ -62,7 +63,7 @@ class FM:
                 calls.append((msg["name"], msg["args"], result))
                 self._send({"id": msg["id"], "result": result})
             elif msg["event"] == "done":   # tokens / context: how much of the window this session used, when the helper says so
-                return {"content": msg["content"], "stopped": msg["stopped"], "calls": calls, **{k: msg[k] for k in ("tokens", "context") if k in msg}}
+                return {"content": msg["content"], "stopped": msg["stopped"], "calls": calls, **{k: msg[k] for k in ("tokens", "context", "reason", "estimated") if k in msg}}
             else:
                 return {"error": msg["kind"], "message": msg["message"], "calls": calls}
 

@@ -147,6 +147,19 @@ def make_tools(ledger, web=None):
     def edit(action):
         return lambda **args: f"ok (#{ledger.do(action, args)})"
 
+    def create_file(path, content):
+        """Write a whole file. If it exists it is replaced, as one recorded, undoable change (a 3B model's first move to rewrite a
+        file is to create it again; refusing sent it into loops of the same error)."""
+        if not isinstance(path, str):
+            return edit("create_file")(path=path, content=content)   # let the ledger reject it with its usual message
+        rel, full = ledger._resolve(path)
+        old = ledger._read(full)
+        if old is None or not isinstance(content, str):
+            return edit("create_file")(path=path, content=content)
+        if old == content:
+            raise ActionError(f"{rel} already has exactly this content")
+        return f"ok (#{ledger.do(*diff_action(rel, old, content))}) replaced the existing {rel}"
+
     def shell(seq):
         r = ledger.get(seq)
         rows = [x for x in ledger.list() if x["cause"] == seq]
@@ -161,8 +174,8 @@ def make_tools(ledger, web=None):
              [_p("pattern", "string", "glob such as *.py", True)], list_files),
         Tool("grep", "Search files with a regex; prints path:line: text.",
              [_p("pattern", "string", "regex"), _p("glob", "string", "only files matching this glob", True)], grep),
-        Tool("create_file", "Create a new file (fails if it exists).",
-             [_p("path", "string", "file path"), _p("content", "string", "full file content")], edit("create_file")),
+        Tool("create_file", "Write a whole file (replaces it if it already exists).",
+             [_p("path", "string", "file path"), _p("content", "string", "full file content")], create_file),
         Tool("replace_text", "Replace one exact piece of text in a file. old must appear exactly once; new takes its place (new='' deletes it). "
              "Put only the changed text in old and new, never the rest of the file.",
              [_p("path", "string", "file path"), _p("old", "string", "exact text to replace"), _p("new", "string", "replacement text")], replace_text),

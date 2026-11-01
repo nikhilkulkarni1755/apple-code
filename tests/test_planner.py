@@ -152,7 +152,7 @@ class FakeFM:
     def __init__(self, script):
         self.script, self.runs = script, []
 
-    def run(self, prompt, tools, instructions="", max_tool_calls=8, temperature=None):
+    def run(self, prompt, tools, instructions="", max_tool_calls=8, temperature=None, budget_tokens=None):
         self.runs.append((prompt, [x.name for x in tools], max_tool_calls))
         return self.script(prompt, {x.name: x.handler for x in tools})
 
@@ -225,7 +225,7 @@ def test_the_splitting_prompt_asks_for_testable_parts():
     seen = []
 
     class Spy:
-        def run(self, prompt, tools, instructions="", max_tool_calls=8, temperature=None):
+        def run(self, prompt, tools, instructions="", max_tool_calls=8, temperature=None, budget_tokens=None):
             seen.append(prompt)
             return {"content": "", "stopped": False, "calls": []}
 

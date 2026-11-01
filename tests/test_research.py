@@ -14,7 +14,7 @@ class FakeFM:
     def __init__(self, script, result=None):
         self.script, self.result, self.runs = script, result or {"content": "", "stopped": False, "calls": []}, []
 
-    def run(self, prompt, tools, instructions="", max_tool_calls=8, temperature=None):
+    def run(self, prompt, tools, instructions="", max_tool_calls=8, temperature=None, budget_tokens=None):
         names = [t.name for t in tools]
         if "start_task" in names:                      # the router asks first: this goal is small, research it directly
             {t.name: t.handler for t in tools}["start_task"]()
@@ -51,7 +51,7 @@ def test_research_reads_the_codebase_then_records_actionables_under_the_task(env
         t["add_actionable"](title="Check rounding rules", kind="research")
 
     r = research(FakeFM(script), L, m, "1", max_tool_calls=5)
-    assert r == {"added": 2, "dropped": 0, "spawned": [], "error": None}
+    assert r == {"added": 2, "dropped": 0, "spawned": [], "error": None, "wound_down": False, "continued": 0}
     kids = m.tasks()[0].children
     assert [(k.id, k.kind, k.title, k.done_when) for k in kids] == [("1.1", "code", "Write sub()", "pytest test_calc.py"), ("1.2", "research", "Check rounding rules", "")]
     assert m.next_task().id == "1.1" and "[code] Write sub()" in (root / "MEMORY.md").read_text()
@@ -92,7 +92,7 @@ def test_actionables_found_before_the_model_ran_out_of_context_are_kept(env):
 def test_nothing_found_changes_nothing(env):
     root, L, m = env
     before = (root / "MEMORY.md").read_bytes()
-    assert research(FakeFM(lambda t: None), L, m, "1") == {"added": 0, "dropped": 0, "spawned": [], "error": None}
+    assert research(FakeFM(lambda t: None), L, m, "1") == {"added": 0, "dropped": 0, "spawned": [], "error": None, "wound_down": False, "continued": 0}
     assert (root / "MEMORY.md").read_bytes() == before
 
 
@@ -156,7 +156,7 @@ def test_repeated_titles_are_added_once_even_across_research_passes(env):
     _, L, m = env
     script = lambda t: [t["add_actionable"](title=x, kind="code") for x in ("Write sub()", "write SUB()", "Add a test", "Write sub()")]
     assert research(FakeFM(script), L, m, "1")["added"] == 2
-    assert research(FakeFM(script), L, m, "1") == {"added": 0, "dropped": 4, "spawned": [], "error": None}
+    assert research(FakeFM(script), L, m, "1") == {"added": 0, "dropped": 4, "spawned": [], "error": None, "wound_down": False, "continued": 0}
     assert [k.title for k in m.tasks()[0].children] == ["Write sub()", "Add a test"]
 
 
@@ -284,7 +284,7 @@ class Router(FakeFM):
         super().__init__(lambda t: None)
         self.parts, self.sessions = parts, []
 
-    def run(self, prompt, tools, instructions="", max_tool_calls=8, temperature=None):
+    def run(self, prompt, tools, instructions="", max_tool_calls=8, temperature=None, budget_tokens=None):
         t = {x.name: x.handler for x in tools}
         self.sessions.append(sorted(t))
         if "decompose_task" in t:
@@ -327,11 +327,11 @@ def test_if_splitting_fails_the_goal_is_researched_instead(env):
     _, L, m = env
 
     class Broken(Router):
-        def run(self, prompt, tools, instructions="", max_tool_calls=8, temperature=None):
+        def run(self, prompt, tools, instructions="", max_tool_calls=8, temperature=None, budget_tokens=None):
             names = [x.name for x in tools]
             if "add_task" in names:
                 return {"error": "guardrail", "message": "blocked", "calls": []}           # the splitter fails
-            return super().run(prompt, tools, instructions, max_tool_calls, temperature)
+            return super().run(prompt, tools, instructions, max_tool_calls, temperature, budget_tokens)
 
     out = research_step(Broken(["x"]))(Ctx(L, m), m.tasks()[0])
     assert out["ok"] and m.tasks()[0].children[0].kind == "code"                           # fell back to ordinary research

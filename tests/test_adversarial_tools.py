@@ -171,9 +171,24 @@ def test_create_file_rejects_hostile_content(env, content):
     rejects(env, "create_file", path="new.txt", content=content)
 
 
-def test_create_file_refuses_to_overwrite(env):
-    rejects(env, "create_file", path="f.py", content="clobber\n")
-    rejects(env, "create_file", path="crlf.txt", content="clobber\n")
+def test_create_file_replaces_an_existing_file_as_one_undoable_change(env):
+    root, L, t, _ = env
+    original = (root / "f.py").read_bytes()
+    out = t["create_file"](path="f.py", content="import os\nx = 2\n")
+    assert out.startswith("ok") and "replaced the existing f.py" in out and (root / "f.py").read_text() == "import os\nx = 2\n"
+    L.undo_last()
+    assert (root / "f.py").read_bytes() == original and L.verify() == []
+    t["create_file"](path="crlf.txt", content="")                                    # replaced with nothing: still allowed, still undoable
+    assert (root / "crlf.txt").read_bytes() == b""
+    L.undo_last()
+    assert (root / "crlf.txt").read_bytes() == b"a\r\nb\r\nc\r\n"
+
+
+def test_replacing_a_file_with_identical_content_and_replacing_with_bad_content_are_rejected(env):
+    rejects(env, "create_file", path="f.py", content=(env[0] / "f.py").read_text())
+    for bad in (None, 5, ["x"], "\ud800", "y" * 1_100_000):
+        rejects(env, "create_file", path="f.py", content=bad)
+    rejects(env, "create_file", path="bin.dat", content="x\n")                      # a binary file is not overwritten either
 
 
 def test_multiline_old_text_does_not_match_crlf_files_and_is_rejected(env):

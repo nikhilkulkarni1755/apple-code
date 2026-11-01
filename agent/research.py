@@ -7,6 +7,7 @@ from .fm import Tool
 from .ledger import ActionError
 from .memory import KINDS, Task
 from .evidence import gather
+from .handoff import BUDGET, MAX_CONTINUATIONS, continuation_depth, looked_at, note
 from .planner import FMBackend, Planner, route
 from .tools import _p, make_tools, visible_files
 
@@ -66,7 +67,7 @@ def research(fm, ledger, memory, task_id, web=None, spawn=None, max_tool_calls=8
               + gather(ledger, f"{task.title} {task.detail}", budget=1200)
               + f"\nProject notes:\n{memory.context(1200)}\nThen call add_actionable for each step.")
     with ledger.scope(task=task_id, kind="research"):
-        r = fm.run(prompt, tools, INSTRUCTIONS, max_tool_calls=max_tool_calls)
+        r = fm.run(prompt, tools, INSTRUCTIONS, max_tool_calls=max_tool_calls, budget_tokens=BUDGET)
         ledger.log_session(r)
         seen = {c.title.casefold() for c in task.children}
         kept = []
@@ -75,10 +76,18 @@ def research(fm, ledger, memory, task_id, web=None, spawn=None, max_tool_calls=8
             if not _restates(t, task) and not _junk_title(t.title) and t.title.casefold() not in seen:
                 kept.append(t)
                 seen.add(t.title.casefold())
+        steps_found = len(kept)
+        winding_down = r.get("reason") == "budget" or r.get("error") == "context_overflow"
+        if winding_down and continuation_depth(task.title) < MAX_CONTINUATIONS:   # out of room: queue the rest, saying what was already read
+            seen_already = looked_at(ledger, ledger._scope["agent"], task_id)
+            kept.append(Task(f"Continue researching: {task.title}", ("Already looked at: " + seen_already) if seen_already else "Pick up where the last session stopped.",
+                             kind="research"))
+            memory.add_handoff(task_id, note(task, done=f"{steps_found} step(s) recorded", problem="", looked=seen_already))
         if kept:
             memory.add_children(task_id, kept)   # kept even if the model later ran out of context
     error = f"{r['error']}: {r['message']}" if "error" in r else None
-    return {"added": len(kept), "dropped": len(found) - len(kept), "spawned": spawned, "error": error}
+    return {"added": steps_found, "dropped": len(found) - steps_found, "spawned": spawned, "error": error, "wound_down": winding_down,
+            "continued": len(kept) - steps_found}
 
 
 def _walk(tasks):
@@ -101,8 +110,9 @@ def research_step(fm, web=None, worker=None):
             if split["route"] == "decompose" and split["tasks"]:
                 return {"ok": True, "summary": f"split into {len(split['tasks'])} parts"}
         r = research(fm, ctx.ledger, ctx.memory, task.id, web, ctx.spawn)
-        if r["added"] == 0 and not r["spawned"]:
+        if r["added"] == 0 and not r["spawned"] and not r["continued"]:
             return {"ok": False, "summary": r["error"] or ("research gave nothing new; try a smaller, more specific goal" if r["dropped"] else "research found nothing to do")}
-        return {"ok": True, "summary": f"{r['added']} actionables, {len(r['spawned'])} subagents" + (f" ({r['error']})" if r["error"] else "")}
+        return {"ok": True, "summary": f"{r['added']} actionables, {len(r['spawned'])} subagents"
+                + (", ran out of room: the rest is queued as a new task" if r["continued"] else "") + (f" ({r['error']})" if r["error"] else "")}
 
     return step

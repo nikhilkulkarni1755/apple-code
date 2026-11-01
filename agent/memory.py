@@ -215,6 +215,26 @@ class Memory:
                                            + (f"Next: {nxt.id} {nxt.title}" if nxt else f"Nothing left to do; {blocked} blocked." if blocked else "All tasks done."))
         return self._save(pre, secs)
 
+    def add_handoff(self, task_id, text):
+        """Keep a note for whoever picks the task up next. One line per task id, newest wins."""
+        pre, secs = self._load()
+        keep = [l for l in secs.get("Handoffs", "").split("\n") if l.strip() and not l.startswith(f"- {task_id}: ")]
+        secs["Handoffs"] = self._body("Handoffs", "\n".join(keep + ["- " + task_id + ": " + " ".join(str(text).split())[:900]]))
+        return self._save(pre, secs)
+
+    def handoff(self, task_id):
+        """The note for this task or its nearest ancestor ('' if none)."""
+        notes = {}
+        for line in self.sections().get("Handoffs", "").split("\n"):
+            m = re.match(r"^- (\d+(?:\.\d+)*): (.*)$", line)
+            if m:
+                notes[m.group(1)] = m.group(2)
+        while task_id:
+            if task_id in notes:
+                return notes[task_id]
+            task_id = task_id.rpartition(".")[0]
+        return ""
+
     def unblock(self):
         """Put every blocked task back to todo so it is tried again. Returns how many."""
         pre, secs = self._load()

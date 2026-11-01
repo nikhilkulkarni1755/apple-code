@@ -56,7 +56,8 @@ def run_one(fm, level, spec, hidden):
     correct = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "hidden_test_h.py"], cwd=root, capture_output=True, text=True).returncode == 0
     lines = sum(len(p.read_text().splitlines()) for p in root.glob("*.py") if not p.name.startswith(("test_", "hidden_")))
     return {"verified": out["ok"], "correct": correct and out["ok"], "attempts": len(verifies), "seconds": round(seconds), "code_lines": lines,
-            "peak_tokens": max((s["tokens"] for s in sessions), default=0), "why": "" if out["ok"] else out["summary"][:90]}
+            "peak_tokens": max((max(s["tokens"], s.get("estimated") or 0) for s in sessions), default=0),
+            "wound_down": sum(1 for s in sessions if s.get("reason") == "budget"), "tool_calls": sum(s.get("tool_calls", 0) for s in sessions), "why": "" if out["ok"] else out["summary"][:90]}
 
 
 if __name__ == "__main__":
@@ -71,9 +72,9 @@ if __name__ == "__main__":
             r = run_one(fm, level, spec, hidden)
             rows.append((level, kind, r))
             print(f"L{level} {kind:26s} run {rep + 1}: verified={str(r['verified']):5s} correct={str(r['correct']):5s} attempts={r['attempts']} "
-                  f"{r['seconds']:4d}s code={r['code_lines']:3d} lines peak={r['peak_tokens']} tokens {r['why']}", flush=True)
+                  f"{r['seconds']:4d}s code={r['code_lines']:3d} lines peak={r['peak_tokens']} tokens, {r['tool_calls']} tool calls, wound down {r['wound_down']}x {r['why']}", flush=True)
     print("\nsummary")
-    for level, kind, _ in LADDER:
+    for level, kind, *_ in LADDER:
         got = [r for lv, _, r in rows if lv == level]
         if got:
             print(f"  L{level} {kind:26s} verified {sum(r['verified'] for r in got)}/{len(got)}  actually correct {sum(r['correct'] for r in got)}/{len(got)}")
