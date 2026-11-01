@@ -192,6 +192,24 @@ def test_a_step_titled_with_just_a_filename_becomes_a_sentence(env):
     assert [k.title for k in m.tasks()[0].children] == ["Create cactus.py", "Update calc.py", "Create src/game/score.py", "Write notes.md for the player", "Create v1.2"]
 
 
+def test_examples_become_the_steps_acceptance_and_unsafe_ones_are_dropped(env):
+    _, L, m = env
+
+    def script(t):
+        t["add_actionable"](title="Write sub() in calc.py", detail="d", kind="code", examples="sub(5, 3) == 2; sub(0, 4) == -4; __import__('os') == 1")
+        t["add_actionable"](title="Write mul() in calc.py", detail="d", kind="code", done_when="mul works", examples="not a comparison")
+        t["add_actionable"](title="Write div() in calc.py", detail="d", kind="code", done_when="pytest test_calc.py")
+    research(FakeFM(script), L, m, "1")
+    assert [k.done_when for k in m.tasks()[0].children] == ["sub(5, 3) == 2; sub(0, 4) == -4", "mul works", "pytest test_calc.py"]
+
+
+def test_add_actionable_offers_an_examples_field(env):
+    _, L, m = env
+    fm = FakeFM(lambda t: None)
+    research(fm, L, m, "1")
+    assert fm.runs and "add_actionable" in fm.runs[0][1]
+
+
 def test_the_goal_is_recorded_once_in_memory(tmp_path):
     from agent.agents import AgentQueue
     root = tmp_path / "ws"

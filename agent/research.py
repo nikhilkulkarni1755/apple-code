@@ -9,6 +9,7 @@ from .memory import KINDS, Task
 from .evidence import gather
 from .handoff import BUDGET, MAX_CONTINUATIONS, continuation_depth, looked_at, note
 from .planner import FMBackend, Planner, route
+from .spec import join_examples, parse_examples
 from .tools import _p, make_tools, visible_files
 
 READ_TOOLS = ("read_file", "list_files", "grep", "web_search", "fetch_url")
@@ -50,14 +51,16 @@ def research(fm, ledger, memory, task_id, web=None, spawn=None, max_tool_calls=8
         raise ActionError(f"no task {task_id!r}")
     found, spawned = [], []
 
-    def add_actionable(title, detail="", kind="code", done_when=""):
-        found.append(Task(title, detail, done_when, kind=kind if kind in KINDS else "code"))
+    def add_actionable(title, detail="", kind="code", done_when="", examples=""):
+        shown = join_examples(parse_examples(examples))   # examples that pass as safe, whole comparisons become the step's acceptance
+        found.append(Task(title, detail, shown or done_when, kind=kind if kind in KINDS else "code"))
         return f"actionable {len(found)} added"
 
     tools = [t for t in make_tools(ledger, web) if t.name in READ_TOOLS]
     tools.append(Tool("add_actionable", "Add one step that must be done. kind is 'code' to change something or 'research' if more must be looked up first.",
                       [_p("title", "string", "short name"), _p("detail", "string", "what to do, naming the files involved", True),
-                       _p("kind", "string", "code or research", True), _p("done_when", "string", "how to tell it is done, ideally a command", True)],
+                       _p("kind", "string", "code or research", True), _p("done_when", "string", "how to tell it is done", True),
+                       _p("examples", "string", "calls with their expected results as Python comparisons, separated by ';'", True)],
                       add_actionable))
     if spawn is not None:
         tools.append(Tool("spawn_subagent", "Hand a large, self-contained part of this work to a new subagent with its own memory.",

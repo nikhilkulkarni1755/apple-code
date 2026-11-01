@@ -7,6 +7,7 @@ from .handoff import BUDGET, MAX_CONTINUATIONS, continuation_depth, looked_at, n
 from .ledger import ActionError
 from .memory import Task
 from .research import research_step
+from .spec import ensure_spec_test
 from .runner import run_tests
 from .tools import make_tools, visible_files
 from .verify import (acceptance_args, failure_summary, frozen_check, is_test_path, judge, protected_violations, red_check, syntax_errors,
@@ -20,7 +21,8 @@ RESERVE = 2500   # tokens left free for tool results and the answer
 
 
 def _edits_of_the_task(ledger, agent, task_id, iteration=None):
-    return [r for r in ledger.edits(agent, task_id, iteration) if not r["path"].endswith("MEMORY.md")]   # bookkeeping is not work
+    return [r for r in ledger.edits(agent, task_id, iteration)
+            if not r["path"].endswith("MEMORY.md") and r["iteration"] != 0]   # bookkeeping and the harness's own spec tests are not the model's work
 
 
 def work_task(fm, ledger, memory, task, agent="root", web=None, max_iterations=4, max_tool_calls=12, say=None):
@@ -28,6 +30,11 @@ def work_task(fm, ledger, memory, task, agent="root", web=None, max_iterations=4
     say = say or (lambda text: None)
     text = f"{task.title} {task.detail} {task.done_when}"
     args = acceptance_args(task.done_when)
+    try:   # a step that gives examples gets its tests written by the harness, before the model starts (see agent/spec.py)
+        with ledger.scope(task=task.id, kind="test", iteration=0):
+            spec_path = ensure_spec_test(ledger, text, f"{task.done_when};{task.detail}")
+    except ActionError:
+        spec_path = None
     start_files = ledger._snapshot()                                               # the project as it is before any work
     originals = {p: t for p, t in start_files.items() if is_test_path(p)}
     roots = {p.split("/")[0].removesuffix(".py") for p in start_files if p.endswith(".py") and not is_test_path(p)}
@@ -54,6 +61,8 @@ def work_task(fm, ledger, memory, task, agent="root", web=None, max_iterations=4
 
     def prompt_for(failure, lean, it, tight=False):
         head = [f"Task {task.id}: {task.title}", task.detail, f"Done when: {('pytest ' + args).strip()} passes with at least one test"]
+        if spec_path:
+            head.append(f"The tests are already written in {spec_path}. Write only the code that makes them pass, and do not edit that file.")
         if earlier:
             head.append("Handoff from the agent before you:\n" + earlier)
         if tight:

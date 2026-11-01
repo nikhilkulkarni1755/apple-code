@@ -261,6 +261,76 @@ def test_a_project_that_is_already_red_is_not_held_to_the_red_check(env):
     assert out["ok"]                                                          # the existing failing test is the proof
 
 
+# ------------------------------------------------------------------ steps that give examples: the harness writes the tests
+SPEC_TASK = lambda: Task("Add sub() to calc.py", "Create sub(a, b) returning a - b in calc.py", "sub(5, 3) == 2; sub(0, 4) == -4", kind="code", id="1")
+
+
+@pytest.fixture
+def spec_env(env):
+    root, L, m, _ = env
+    m.add_plan("Subtraction", [Task("Add sub() to calc.py", "Create sub(a, b) returning a - b in calc.py", "sub(5, 3) == 2; sub(0, 4) == -4", kind="code")])
+    return root, L, m, m.tasks()[1]
+
+
+def only_code(t, p=None):
+    t["insert_after"](path="calc.py", anchor="return a + b", text="\n\ndef sub(a, b):\n    return a - b")
+
+
+def test_the_harness_writes_the_tests_from_the_examples_before_the_model_starts(spec_env):
+    root, L, m, task = spec_env
+    fm, out = work(spec_env, [only_code])
+    assert out["ok"] and "tests are already written in test_calc_spec.py" in fm.prompts[0] and "do not edit that file" in fm.prompts[0]
+    assert (root / "test_calc_spec.py").read_text() == "from calc import sub\n\n\ndef test_spec_1():\n    assert sub(5, 3) == 2\n\n\ndef test_spec_2():\n    assert sub(0, 4) == -4\n"
+    assert out["summary"].endswith("changed calc.py") and "test_calc_spec" not in out["summary"]            # the model's work is the code, not the generated tests
+    assert [(r["path"], r["iteration"], r["kind"]) for r in L.list() if r["path"] == "test_calc_spec.py"] == [("test_calc_spec.py", 0, "test")]
+
+
+def test_with_examples_the_model_writes_no_tests_at_all_and_still_gets_verified(spec_env):
+    root, L, m, task = spec_env
+    before = {p.name for p in root.glob("*.py")}
+    fm, out = work(spec_env, [only_code])
+    assert out["ok"] and {p.name for p in root.glob("*.py")} - before == {"test_calc_spec.py"}
+    assert "3 passed" in out["evidence"]                                           # the original test_add plus the two generated ones
+
+
+def test_the_generated_tests_are_protected_like_any_other_original_test(spec_env):
+    root, L, m, task = spec_env
+    weaken = lambda t, p=None: (t["create_file"](path="test_calc_spec.py", content="from calc import add\n\n\ndef test_spec_1():\n    assert add(1, 1) == 2\n"),)
+    fm, out = work(spec_env, [weaken, only_code], max_iterations=2)
+    assert "changed existing test code in test_calc_spec.py" in fm.prompts[1] and out["ok"]
+    assert "sub(5, 3) == 2" in (root / "test_calc_spec.py").read_text()
+
+
+def test_doing_nothing_is_still_not_enough_when_the_tests_are_generated(spec_env):
+    root, L, m, task = spec_env
+    fm, out = work(spec_env, [idle], max_iterations=3)
+    assert not out["ok"] and (root / "calc.py").read_text() == CALC and not (root / "test_calc_spec.py").exists()          # rolled back with the rest
+    assert "pytest exited with code 2" in out["summary"] and "no files were changed" in out["summary"]     # the generated tests cannot even import calc.sub
+
+
+def test_examples_that_cannot_be_met_block_the_step_instead_of_being_met_by_changing_them(spec_env):
+    root, L, m, _ = spec_env
+    m.add_plan("Impossible", [Task("Add sub() to calc.py", "Create sub in calc.py", "sub(5, 3) == 99", kind="code")])
+    task = m.tasks()[2]
+    fm, out = work((root, L, m, task), [only_code], max_iterations=2)
+    assert not out["ok"] and "edits rolled back" in out["summary"]
+    assert not (root / "test_calc_spec.py").exists()                                 # the unmeetable tests went away with the rest of the attempt
+
+
+def test_a_step_without_examples_works_exactly_as_before(env):
+    root, L, m, task = env
+    fm, out = work(env, [good])
+    assert out["ok"] and "already written" not in fm.prompts[0] and not (root / "test_calc_spec.py").exists()
+
+
+def test_hostile_examples_in_a_step_write_nothing_and_do_not_stop_the_work(env):
+    root, L, m, _ = env
+    bad = Task("Add sub() to calc.py", "with a test", "__import__('os').system('touch pwned') == 0; open('x') == 1", kind="code", id="1")
+    fm = FakeFM([good])
+    out = work_task(fm, L, m, bad)
+    assert out["ok"] and not (root / "pwned").exists() and not list(root.glob("test_*_spec.py"))
+
+
 # ------------------------------------------------------------------ running out of room (the 7K budget)
 BUDGET_STOP = {"content": "", "stopped": True, "calls": [], "reason": "budget", "tokens": 7300, "estimated": 7200, "context": 8192}
 
