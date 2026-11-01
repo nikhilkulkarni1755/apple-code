@@ -180,7 +180,7 @@ def test_a_neutered_original_test_cannot_hide_broken_code(env):
     root, L, m, task = env
     sneaky = lambda t, p=None: (t["insert_after"](path="test_calc.py", anchor="def test_add():", text="    return"),            # the old test now passes vacuously
                                 t["replace_text"](path="calc.py", old="return a + b", new="return a - b"),                     # the code is wrong
-                                t["create_file"](path="test_new.py", content="def test_new():\n    assert True\n"))           # a new passing test, so the count rises
+                                t["create_file"](path="test_new.py", content="from calc import add\n\n\ndef test_new():\n    assert add(5, 0) == 5\n"))   # passes even with the bug
     def repair(t, p=None):                                    # undo the damage, then do the job properly
         t["replace_text"](path="calc.py", old="return a - b", new="return a + b")
         t["replace_text"](path="test_calc.py", old="    return\n", new="")                 # removing what the task itself added is allowed
@@ -199,6 +199,55 @@ def test_retyping_the_existing_test_around_a_new_one_is_allowed(env):
                                 t["insert_after"](path="calc.py", anchor="return a + b", text="\n\ndef sub(a, b):\n    return a - b"))
     fm, out = work(env, [retype], max_iterations=1)
     assert out["ok"]
+
+
+def test_a_test_that_is_only_comments_and_pass_is_not_evidence(env):
+    """This really happened: the real model's 'verified' jump test was comments and `pass`, and the code it covered did not exist."""
+    root, L, m, task = env
+    hollow = lambda t, p=None: (t["create_file"](path="test_jump.py", content="# the jump should work\n\n\ndef test_jump():\n    # TODO\n    pass\n"),
+                                t["insert_after"](path="calc.py", anchor="return a + b", text="\n\ndef jump():\n    return 1"))
+    leave_it = lambda t, p=None: t["insert_after"](path="calc.py", anchor="def jump():", text="    # still no real test")
+    fix_it = lambda t, p=None: t["replace_text"](path="test_jump.py", old="    # TODO\n    pass\n", new="    from calc import jump\n    assert jump() == 1\n")
+    fm, out = work(env, [hollow, leave_it, fix_it], max_iterations=3)
+    assert "asserts nothing" in fm.prompts[1] and "test_jump.py::test_jump" in fm.prompts[1]
+    assert "asserts nothing" in fm.prompts[2]                                      # leaving the hollow test in place is rejected again
+    assert out["ok"] and "after 3 attempt(s)" in out["summary"]
+
+
+def test_a_test_that_never_touches_the_projects_code_is_not_evidence(env):
+    root, L, m, task = env
+    unrelated = lambda t, p=None: (t["create_file"](path="test_x.py", content="def test_math():\n    assert 1 + 1 == 2\n"),
+                                   t["insert_after"](path="calc.py", anchor="return a + b", text="\n\ndef sub(a, b):\n    return a - b"))
+    fm, out = work(env, [unrelated], max_iterations=1)
+    assert not out["ok"] and "does not use any code from the project" in out["summary"]
+    imported_but_unused = lambda t, p=None: (t["create_file"](path="test_y.py", content="from calc import add\n\n\ndef test_y():\n    assert True\n"),
+                                             t["insert_after"](path="calc.py", anchor="return a + b", text="\n\ndef sub(a, b):\n    return a - b"))
+    fm, out = work(env, [imported_but_unused], max_iterations=1)
+    assert not out["ok"] and "does not use any code from the project" in out["summary"]
+
+
+def test_tests_that_pass_without_the_change_do_not_prove_the_change(env):
+    root, L, m, task = env
+    already_true = lambda t, p=None: (t["create_file"](path="test_more.py", content="from calc import add\n\n\ndef test_add_zero():\n    assert add(0, 0) == 0\n"),
+                                      t["insert_after"](path="calc.py", anchor="return a + b", text="\n\ndef sub(a, b):\n    return a - b"))
+    fm, out = work(env, [already_true, good], max_iterations=2)
+    assert "also pass on the code as it was before your change" in fm.prompts[1] and out["ok"]
+
+
+def test_adding_a_test_for_code_that_already_exists_is_fine(env):
+    """No source changed, so there is nothing to start red: the test only has to be a real one."""
+    root, L, m, task = env
+    only_a_test = lambda t, p=None: t["create_file"](path="test_more.py", content="from calc import add\n\n\ndef test_add_negative():\n    assert add(-1, 1) == 0\n")
+    fm, out = work(env, [only_a_test], max_iterations=1)
+    assert out["ok"] and "changed test_more.py" in out["summary"]
+
+
+def test_a_project_that_is_already_red_is_not_held_to_the_red_check(env):
+    root, L, m, task = env
+    (root / "test_calc.py").write_text(TESTS + "\n\ndef test_sub():\n    from calc import sub\n    assert sub(5, 3) == 2\n")
+    L2 = Ledger(root)
+    fm, out = work((root, L2, m, task), [lambda t, p=None: t["insert_after"](path="calc.py", anchor="return a + b", text="\n\ndef sub(a, b):\n    return a - b")], max_iterations=1)
+    assert out["ok"]                                                          # the existing failing test is the proof
 
 
 # ------------------------------------------------------------------ giving up

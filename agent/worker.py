@@ -5,7 +5,8 @@ import json
 from .research import research_step
 from .runner import run_tests
 from .tools import make_tools, visible_files
-from .verify import acceptance_args, failure_summary, frozen_check, is_test_path, judge, protected_violations, syntax_errors, unmentioned_deletions
+from .verify import (acceptance_args, failure_summary, frozen_check, is_test_path, judge, protected_violations, red_check, syntax_errors,
+                     unmentioned_deletions, vacuous_tests)
 
 INSTRUCTIONS = ("You are a coding agent. Do the task by editing files with the tools. Write or extend a test that proves it works. "
                 "Use replace_text with the exact existing text, insert_after, or create_file. Never change existing tests. "
@@ -23,7 +24,9 @@ def work_task(fm, ledger, memory, task, agent="root", web=None, max_iterations=4
     say = say or (lambda text: None)
     text = f"{task.title} {task.detail} {task.done_when}"
     args = acceptance_args(task.done_when)
-    originals = {p: t for p, t in ledger._snapshot().items() if is_test_path(p)}   # the tests as they are before any work
+    start_files = ledger._snapshot()                                               # the project as it is before any work
+    originals = {p: t for p, t in start_files.items() if is_test_path(p)}
+    roots = {p.split("/")[0].removesuffix(".py") for p in start_files if p.endswith(".py") and not is_test_path(p)}
     names = TOOLS + (("delete_file",) if any(w in text.lower() for w in ("delete", "remove")) else ()) + (("web_search", "fetch_url") if web else ())
     tools = [t for t in make_tools(ledger, web) if t.name in names]
 
@@ -76,17 +79,28 @@ def work_task(fm, ledger, memory, task, agent="root", web=None, max_iterations=4
             last = broken
             continue
         seq, code, out, err = run_acceptance(it)
-        verdict = judge(args, code, out, err, edited=bool(_edits_of_the_task(ledger, agent, task.id)), baseline_passed=passed_before)
+        mine = _edits_of_the_task(ledger, agent, task.id)
+        verdict = judge(args, code, out, err, edited=bool(mine), baseline_passed=passed_before)
+        custom = False   # a failure found by the harness's own checks below, not shown by the test output
+        if verdict.ok:
+            roots_now = roots | {p.split("/")[0].removesuffix(".py") for p in {r["path"] for r in mine} if p.endswith(".py") and not is_test_path(p)}
+            hollow = vacuous_tests(ledger.root, originals, sorted({r["path"] for r in mine if is_test_path(r["path"])}), roots_now)
+            if hollow:
+                verdict.ok, verdict.reasons, custom = False, hollow, True
         if verdict.ok:
             frozen_ok, why = frozen_check(ledger.root, originals)
             if not frozen_ok:
-                verdict.ok, verdict.reasons = False, [f"the original tests, unchanged, fail against your code:\n{why}"]
+                verdict.ok, verdict.reasons, custom = False, [f"the original tests, unchanged, fail against your code:\n{why}"], True
+        if verdict.ok and baseline.ok and any(not is_test_path(r["path"]) for r in mine):   # code changed on a green project: the new tests must start red
+            red_ok, why = red_check(ledger.root, start_files)
+            if not red_ok:
+                verdict.ok, verdict.reasons, custom = False, [why], True
         record(it, verdict.ok, seq, "; ".join(verdict.reasons))
         if verdict.ok:
             files = sorted({r["path"] for r in _edits_of_the_task(ledger, agent, task.id)})
             return {"ok": True, "summary": f"verified after {it} attempt(s); changed {', '.join(files)}",
                     "evidence": f"run #{seq}: pytest exit 0, {verdict.summary.get('passed')} passed"}
-        new = "; ".join(verdict.reasons) if (verdict.ok is False and verdict.reasons and "original tests" in verdict.reasons[0]) else failure_summary(out) or "; ".join(verdict.reasons)
+        new = "; ".join(verdict.reasons) if custom else failure_summary(out) or "; ".join(verdict.reasons)
         stalls = stalls + 1 if (not rows and new == failure) else 0
         failure, last = new, verdict.reasons
         if stalls >= 2:

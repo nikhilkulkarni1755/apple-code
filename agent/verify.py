@@ -1,5 +1,6 @@
 """The harness decides whether a task is done: it runs the tests itself and checks the evidence.
 The model's claim that it finished counts for nothing."""
+import ast
 import re
 import shlex
 import shutil
@@ -139,3 +140,79 @@ def frozen_check(root, originals, timeout=300):
     if err or code != 0:
         return False, failure_summary(out) or err or f"pytest exited with code {code}"
     return True, ""
+
+
+# ---- can the new tests fail at all? ----
+def _test_functions(tree):
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith("test"):
+            yield node
+
+
+def _asserts(fn):
+    """A real check: an assert statement, pytest.raises/warns, or an assertXxx call. Comments and `pass` check nothing."""
+    for n in ast.walk(fn):
+        if isinstance(n, ast.Assert):
+            return True
+        if isinstance(n, ast.Call):
+            name = getattr(n.func, "attr", getattr(n.func, "id", ""))
+            if name in ("raises", "warns", "fail") or name.startswith("assert"):
+                return True
+    return False
+
+
+def _project_names(tree, roots):
+    """Names a test file brings in from the project's own modules (import calc / from calc import add / from . import x)."""
+    names = set()
+    for n in ast.walk(tree):
+        if isinstance(n, ast.ImportFrom) and (n.level > 0 or (n.module or "").split(".")[0] in roots):
+            names |= {a.asname or a.name for a in n.names}
+        elif isinstance(n, ast.Import):
+            names |= {(a.asname or a.name).split(".")[0] for a in n.names if a.name.split(".")[0] in roots}
+    return names
+
+
+def vacuous_tests(root, originals, changed, roots):
+    """New test functions that cannot catch anything: no real assertion, or no use of the project's code.
+    `originals` are the test files before the task, `changed` the test files the task touched, `roots` the project's module names."""
+    problems = []
+    for path in changed:
+        try:
+            tree = ast.parse((root / path).read_text())
+        except (OSError, SyntaxError, UnicodeDecodeError, ValueError):
+            continue   # unreadable files are the syntax check's business
+        try:
+            before = {f.name for f in _test_functions(ast.parse(originals[path]))} if path in originals else set()
+        except SyntaxError:
+            before = set()
+        names = _project_names(tree, roots)
+        for fn in _test_functions(tree):
+            if fn.name in before:
+                continue
+            if not _asserts(fn):
+                problems.append(f"{path}::{fn.name} is a new test that asserts nothing (comments and `pass` check nothing)")
+            elif not any(isinstance(n, ast.Name) and n.id in names for n in ast.walk(fn)):
+                problems.append(f"{path}::{fn.name} is a new test that does not use any code from the project")
+    return problems
+
+
+def red_check(root, start_files, timeout=300):
+    """Red then green. Run the tests as they are now against the project's code as it was before the task (new tests kept, source
+    files put back): they must fail there. Tests that also pass without the change prove nothing. Returns (ok, why)."""
+    with tempfile.TemporaryDirectory() as scratch:
+        shutil.copytree(root, scratch, dirs_exist_ok=True, ignore=shutil.ignore_patterns(".agent", ".git", ".venv", "node_modules", "__pycache__", ".pytest_cache"))
+        now = {str(p.relative_to(scratch)) for p in Path(scratch).rglob("*.py")}
+        for p in now | set(start_files):
+            if is_test_path(p):
+                continue
+            f = Path(scratch) / p
+            if p in start_files:
+                f.parent.mkdir(parents=True, exist_ok=True)
+                f.write_text(start_files[p])
+            elif f.exists():
+                f.unlink()
+        code, out, _, err = LocalExecutor().run(f"{shlex.quote(test_python(root))} -m pytest -q -p no:cacheprovider", scratch, timeout)
+    if err is None and code == 0:
+        return False, "all the tests, including your new ones, also pass on the code as it was before your change, so they do not prove the change: write a test that fails without it"
+    return True, ""
+

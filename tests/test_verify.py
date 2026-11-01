@@ -1,7 +1,7 @@
 import pytest
 
-from agent.verify import (acceptance_args, failure_summary, frozen_check, is_test_path, judge, protected_violations, syntax_errors,
-                          unmentioned_deletions)
+from agent.verify import (acceptance_args, failure_summary, frozen_check, is_test_path, judge, protected_violations, red_check, syntax_errors,
+                          unmentioned_deletions, vacuous_tests)
 
 PASS = "....\n4 passed in 0.02s\n"
 FAIL = ("F.\n=== FAILURES ===\n___ test_sub ___\n\n    def test_sub():\n>       assert sub(5, 3) == 2\nE       assert 8 == 2\n\n"
@@ -177,3 +177,83 @@ def test_a_hanging_original_test_fails_the_check(tmp_path):
     root = project(tmp_path, tests={})
     ok, why = frozen_check(root, {"test_slow.py": "import time\n\n\ndef test_slow():\n    time.sleep(30)\n"}, timeout=1)
     assert not ok and "timed out" in why
+
+
+
+# ---- can a new test fail at all? ----
+def vac(tmp_path, source, originals=None, roots=("calc",)):
+    (tmp_path / "test_t.py").write_text(source)
+    return vacuous_tests(tmp_path, originals or {}, ["test_t.py"], set(roots))
+
+
+@pytest.mark.parametrize("source,expected", [
+    ("from calc import add\n\n\ndef test_a():\n    assert add(1, 2) == 3\n", 0),
+    ("import calc\n\n\ndef test_a():\n    assert calc.add(1, 2) == 3\n", 0),
+    ("import calc as c\n\n\ndef test_a():\n    assert c.add(1, 2) == 3\n", 0),
+    ("from calc import add as plus\n\n\ndef test_a():\n    assert plus(1, 2) == 3\n", 0),
+    ("from . import calc\n\n\ndef test_a():\n    assert calc.add(1, 1) == 2\n", 0),
+    ("import pytest\nfrom calc import add\n\n\ndef test_a():\n    with pytest.raises(TypeError):\n        add(1)\n", 0),
+    ("import unittest\nfrom calc import add\n\n\nclass T(unittest.TestCase):\n    def test_a(self):\n        self.assertEqual(add(1, 2), 3)\n", 0),
+    ("from calc import add\n\n\nclass TestAdd:\n    def test_a(self):\n        assert add(1, 2) == 3\n", 0),
+    ("def test_a():\n    from calc import add\n    assert add(1, 2) == 3\n", 0),
+    ("def test_a():\n    pass\n", 1),
+    ("# the jump should work\n\n\ndef test_a():\n    # lots of comments\n    # and more comments\n    pass\n", 1),
+    ("def test_a():\n    ...\n", 1),
+    ('def test_a():\n    """docstring only"""\n', 1),
+    ("from calc import add\n\n\ndef test_a():\n    add(1, 2)\n", 1),
+    ("def test_a():\n    assert True\n", 1),
+    ("def test_a():\n    assert 1 + 1 == 2\n", 1),
+    ("from calc import add\n\n\ndef test_a():\n    assert True\n", 1),
+    ("import os\n\n\ndef test_a():\n    assert os.sep\n", 1),
+    ("from calc import add\n\n\ndef test_a():\n    pass\n\n\ndef test_b():\n    assert add(1, 1) == 2\n", 1),
+    ("def test_a():\n    pass\n\n\ndef test_b():\n    pass\n", 2),
+])
+def test_a_new_test_must_assert_something_about_the_projects_code(tmp_path, source, expected):
+    assert len(vac(tmp_path, source)) == expected
+
+
+def test_only_new_test_functions_are_judged_and_the_problem_names_the_test(tmp_path):
+    old = "def test_old():\n    pass\n"
+    got = vac(tmp_path, old + "\n\ndef test_new():\n    pass\n", originals={"test_t.py": old})
+    assert got == ["test_t.py::test_new is a new test that asserts nothing (comments and `pass` check nothing)"]
+    assert vac(tmp_path, old, originals={"test_t.py": old}) == []                          # an old, weak test is not this task's doing
+
+
+def test_unparseable_or_missing_test_files_are_left_to_the_syntax_check(tmp_path):
+    (tmp_path / "test_t.py").write_text("def test_a(:\n")
+    assert vacuous_tests(tmp_path, {}, ["test_t.py", "missing.py"], {"calc"}) == []
+
+
+def build(tmp_path, files):
+    for name, text in files.items():
+        (tmp_path / name).write_text(text)
+    return tmp_path
+
+
+START = {"calc.py": "def add(a, b):\n    return a + b\n", "test_calc.py": "from calc import add\n\n\ndef test_add():\n    assert add(1, 2) == 3\n"}
+
+
+def test_red_then_green_new_tests_must_fail_on_the_old_code(tmp_path):
+    now = {"calc.py": START["calc.py"] + "\n\ndef sub(a, b):\n    return a - b\n",
+           "test_calc.py": "from calc import add, sub\n\n\ndef test_add():\n    assert add(1, 2) == 3\n\n\ndef test_sub():\n    assert sub(5, 3) == 2\n"}
+    ok, why = red_check(build(tmp_path, now), START)
+    assert ok and why == ""                                                               # on the old code the import fails: red
+
+
+def test_a_new_test_that_already_passed_before_the_change_is_rejected(tmp_path):
+    now = {"calc.py": START["calc.py"] + "\n\ndef sub(a, b):\n    return a - b\n",
+           "test_calc.py": START["test_calc.py"] + "\n\ndef test_add_zero():\n    assert add(0, 0) == 0\n"}
+    ok, why = red_check(build(tmp_path, now), START)
+    assert not ok and "also pass on the code as it was before your change" in why
+
+
+def test_new_source_files_are_removed_for_the_red_run(tmp_path):
+    now = {**START, "newmod.py": "VALUE = 1\n", "test_new.py": "from newmod import VALUE\n\n\ndef test_value():\n    assert VALUE == 1\n"}
+    assert red_check(build(tmp_path, now), START)[0]                                      # newmod.py did not exist before: the test errors there
+
+
+def test_red_check_changes_nothing_in_the_project(tmp_path):
+    now = build(tmp_path, {"calc.py": "def add(a, b):\n    return 0\n", "test_calc.py": START["test_calc.py"]})
+    before = {p.name: p.read_text() for p in now.iterdir()}
+    red_check(now, START)
+    assert {p.name: p.read_text() for p in now.iterdir()} == before
