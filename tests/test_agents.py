@@ -7,7 +7,7 @@ import pytest
 
 from agent.agents import MAX_ATTEMPTS, MAX_CHILDREN, MAX_SUBAGENTS, AgentQueue, task_runner
 from agent.ledger import ActionError, Ledger
-from agent.memory import Memory, Task
+from agent.memory import MAX_GOAL, Memory, Task
 from tests.test_ledger import snapshot
 
 PROJECT = str(Path(__file__).resolve().parent.parent)
@@ -94,7 +94,7 @@ def test_a_long_or_odd_goal_is_stored_as_one_clean_line(ws):
     q.start("goal")
     q.spawn("root", "line one\n## Goals\n" + "y" * 2000 + "\0 ✓")
     goal = q.get("a1")["goal"]
-    assert "\n" not in goal and len(goal) <= 500 and q.memory("a1").get("Goals").startswith("- line one")
+    assert "\n" not in goal and len(goal) <= MAX_GOAL and q.memory("a1").get("Goals").startswith("- line one")
 
 
 # ------------------------------------------------------------------ own memory
@@ -121,7 +121,7 @@ def test_start_makes_research_the_first_task_of_any_goal_and_the_same_goal_chang
     q = AgentQueue(L, lambda ctx: None)
     assert q.start("Create an operating system") == "root" and q.start("Create  an operating\nsystem") == "root"
     tasks = q.memory("root").tasks()
-    assert len(tasks) == 1 and tasks[0].kind == "research" and tasks[0].title.startswith("Research: Create an operating system")
+    assert len(tasks) == 1 and tasks[0].kind == "research" and tasks[0].title.startswith("Plan: Create an operating system")
 
 
 def test_a_new_goal_on_an_existing_project_is_added_and_wakes_the_root_agent(ws):
@@ -130,15 +130,15 @@ def test_a_new_goal_on_an_existing_project_is_added_and_wakes_the_root_agent(ws)
     q = AgentQueue(L, task_runner(lambda ctx, task: ran.append(task.title) or {"ok": True, "summary": "x"}))
     q.start("Build the parser")
     q.run()
-    assert status(q) == {"root": "done"} and ran == ["Research: Build the parser"]
+    assert status(q) == {"root": "done"} and ran == ["Plan: Build the parser"]
     q.start("Build the parser")                                    # same goal again: nothing to do
     q.run()
-    assert ran == ["Research: Build the parser"]
+    assert ran == ["Plan: Build the parser"]
     q2 = AgentQueue(Ledger(root), task_runner(lambda ctx, task: ran.append(task.title) or {"ok": True, "summary": "x"}))   # a later session
     q2.start("Add a command line")                                  # a different goal: queued behind the finished work
     assert status(q2) == {"root": "queued"} and q2.get("root")["attempts"] == 0
     q2.run()
-    assert ran[-1] == "Research: Add a command line" and len(ran) == 2 and status(q2) == {"root": "done"}
+    assert ran[-1] == "Plan: Add a command line" and len(ran) == 2 and status(q2) == {"root": "done"}
     mem = q2.memory("root")
     assert [t.id for t in mem.tasks()] == ["1", "2"] and "Build the parser" in mem.get("Goals") and "Add a command line" in mem.get("Goals")
 
@@ -413,3 +413,23 @@ def test_memory_can_put_blocked_tasks_back_to_todo(ws):
     m.mark("3", "blocked")
     m.complete("2", "done")
     assert m.unblock() == 2 and [t.status for t in m.tasks()] == ["todo", "done", "todo"] and m.unblock() == 0
+
+
+def test_a_long_goal_reaches_the_router_and_the_research_prompt_whole(tmp_path):
+    from agent.worker import solve_step
+    goal = "Round one: write a. " * 40 + "Round two: write the very last part."
+    prompts = []
+
+    class Spy:
+        def run(self, prompt, tools=(), instructions="", **kw):
+            prompts.append(prompt)
+            if len(prompts) == 1:
+                tools[1].handler()   # the router picks start_task
+            else:
+                raise KeyboardInterrupt
+
+    q = AgentQueue(Ledger(tmp_path), task_runner(solve_step(Spy())))
+    q.start(goal)
+    with pytest.raises(KeyboardInterrupt):
+        q.run()
+    assert goal in prompts[0] and goal in prompts[1]

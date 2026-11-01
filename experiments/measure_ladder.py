@@ -1,7 +1,9 @@
 """How big a piece of work can the on-device model finish? A ladder of precisely specified tasks from a one-line function to a small
 class, each run in an empty project through the real worker loop. Also checks the result against hidden tests, because 'verified by
 the harness' is not the same as 'correct'.
-Run from the repo root: .venv/bin/python -m experiments.measure_ladder [reps] [level ...]"""
+Run from the repo root: .venv/bin/python -m experiments.measure_ladder [reps] [level ...] [--tests-given]
+--tests-given supplies the acceptance tests ready-made, so only the implementation is up to the model.
+--model-examples has the model propose examples for each task, and the harness turns them into the tests."""
 import json
 import subprocess
 import sys
@@ -42,13 +44,17 @@ LADDER = [  # (level, title, spec, hidden test that only I can see)
 ]
 
 
-def run_one(fm, level, spec, hidden):
+def run_one(fm, level, spec, hidden, tests_given=False, propose=False):
     root = Path(tempfile.mkdtemp())
+    if tests_given:   # the acceptance tests are provided; the model only has to write the implementation
+        (root / "test_spec.py").write_text(hidden)
+        spec = spec + " The tests in test_spec.py must pass; do not change test_spec.py."
     L = Ledger(root)
     m = Memory(L)
     task = Task(spec.split(".")[0][:70], spec, "pytest passes", kind="code", id="1")
     started = time.time()
-    out = work_task(fm, L, m, task, max_iterations=4)
+    m.add_plan("ladder", [task])
+    out = work_task(fm, L, m, task, max_iterations=4, propose=propose, say=print if propose else None)
     seconds = time.time() - started
     verifies = [r for r in L.list() if r["action"] == "verify"]
     sessions = [json.loads(r["args"]) for r in L.list() if r["action"] == "session"]
@@ -61,15 +67,18 @@ def run_one(fm, level, spec, hidden):
 
 
 if __name__ == "__main__":
-    reps = int(sys.argv[1]) if len(sys.argv) > 1 else 2
-    only = {int(x) for x in sys.argv[2:]}
+    args = [a for a in sys.argv[1:] if a not in ("--tests-given", "--model-examples")]
+    given = "--tests-given" in sys.argv
+    propose = "--model-examples" in sys.argv
+    reps = int(args[0]) if args else 2
+    only = {int(x) for x in args[1:]}
     fm = FM()
     rows = []
     for level, kind, spec, hidden in LADDER:
         if only and level not in only:
             continue
         for rep in range(reps):
-            r = run_one(fm, level, spec, hidden)
+            r = run_one(fm, level, spec, hidden, given, propose)
             rows.append((level, kind, r))
             print(f"L{level} {kind:26s} run {rep + 1}: verified={str(r['verified']):5s} correct={str(r['correct']):5s} attempts={r['attempts']} "
                   f"{r['seconds']:4d}s code={r['code_lines']:3d} lines peak={r['peak_tokens']} tokens, {r['tool_calls']} tool calls, wound down {r['wound_down']}x {r['why']}", flush=True)

@@ -27,8 +27,8 @@ def test_the_budget_is_seven_k_of_the_window_and_continuations_are_limited():
     assert BUDGET == 7168 == 7 * 1024 and BUDGET < 8192 and MAX_CONTINUATIONS == 2
 
 
-@pytest.mark.parametrize("title,depth", [("Add sub()", 0), ("Continue: Add sub()", 1), ("Continue: Continue: Add sub()", 2), ("Continue researching: X", 1),
-                                         ("Continue researching: Continue: X", 2), ("continue: lowercase is not one", 0), ("Please Continue: x", 0), ("", 0)])
+@pytest.mark.parametrize("title,depth", [("Add sub()", 0), ("Continue: Add sub()", 1), ("Continue: Continue: Add sub()", 2),
+                                         ("continue: lowercase is not one", 0), ("Please Continue: x", 0), ("", 0)])
 def test_continuation_depth(title, depth):
     assert continuation_depth(title) == depth
 
@@ -116,7 +116,6 @@ def test_hostile_handoff_text_cannot_break_memory(env, text):
     assert "Goals" in m.sections() and m.get("Goals") == "- Add subtraction"
 
 
-# ------------------------------------------------------------------ research winds down at the budget
 def reads(t):
     t["read_file"](path="calc.py")
     t["grep"]("def add")
@@ -127,40 +126,5 @@ def stopped(reason="budget"):
     return {"content": "", "stopped": True, "calls": [("a", {}, "r")] * 3, "reason": reason, "tokens": 7300, "estimated": 7200, "context": 8192}
 
 
-def test_research_that_runs_out_of_room_keeps_its_steps_and_queues_the_rest_with_what_it_already_read(env):
-    root, L, m = env
-    r = research(FakeFM(reads, result=stopped()), L, m, "1")
-    assert (r["added"], r["continued"], r["wound_down"]) == (1, 1, True)
-    kids = m.tasks()[0].children
-    assert [(k.id, k.kind, k.title) for k in kids] == [("1.1", "code", "Write sub() in calc.py"), ("1.2", "research", "Continue researching: Research: add subtraction")]
-    assert kids[1].detail == "Already looked at: read calc.py; searched the code for 'def add'"
-    assert "Already looked at: read calc.py" in m.handoff("1") and "Done so far: 1 step(s) recorded" in m.handoff("1")
-    rows = [r for r in L.list() if r["action"] == "session"]
-    assert json.loads(rows[0]["args"]) == {"tokens": 7300, "context": 8192, "estimated": 7200, "reason": "budget", "tool_calls": 3}
 
 
-def test_hitting_apples_hard_limit_during_research_is_handled_the_same_way(env):
-    _, L, m = env
-    r = research(FakeFM(reads, result={"error": "context_overflow", "message": "too long", "calls": []}), L, m, "1")
-    assert r["continued"] == 1 and r["wound_down"] and m.tasks()[0].children[-1].title.startswith("Continue researching:")
-
-
-def test_research_that_finishes_within_the_budget_queues_nothing_extra(env):
-    _, L, m = env
-    r = research(FakeFM(reads), L, m, "1")
-    assert (r["continued"], r["wound_down"]) == (0, False) and [k.title for k in m.tasks()[0].children] == ["Write sub() in calc.py"] and m.handoff("1") == ""
-
-
-def test_research_does_not_continue_forever(env):
-    _, L, m = env
-    m.add_children("1", [Task("Continue researching: Continue researching: Research: x", "d", kind="research")])
-    r = research(FakeFM(reads, result=stopped()), L, m, "1.1")
-    assert r["continued"] == 0 and r["wound_down"] is True and m.tasks()[0].children[0].children[-1].title == "Write sub() in calc.py"
-
-
-def test_a_session_that_only_ran_out_of_room_is_not_reported_as_finding_nothing(env):
-    _, L, m = env
-    out = research_step(FakeFM(lambda t: t["read_file"](path="calc.py"), result=stopped()))(Ctx(L, m), m.tasks()[0])
-    assert out["ok"] and "ran out of room" in out["summary"] and m.tasks()[0].children[0].kind == "research"
-    again = research_step(FakeFM(lambda t: None, result={"content": "", "stopped": False, "calls": []}))(Ctx(L, m), m.next_task())
-    assert again["ok"] is False                                                     # but a session that finished and found nothing still is

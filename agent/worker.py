@@ -7,6 +7,7 @@ from .handoff import BUDGET, MAX_CONTINUATIONS, continuation_depth, looked_at, n
 from .ledger import ActionError
 from .memory import Task
 from .research import research_step
+from .spec import ensure_spec_test, join_examples, module_of, propose_examples
 from .runner import run_tests
 from .tools import make_tools, visible_files
 from .verify import (acceptance_args, failure_summary, frozen_check, is_test_path, judge, protected_violations, red_check, syntax_errors,
@@ -20,16 +21,35 @@ RESERVE = 2500   # tokens left free for tool results and the answer
 
 
 def _edits_of_the_task(ledger, agent, task_id, iteration=None):
-    return [r for r in ledger.edits(agent, task_id, iteration) if not r["path"].endswith("MEMORY.md")]   # bookkeeping is not work
+    return [r for r in ledger.edits(agent, task_id, iteration)
+            if not r["path"].endswith("MEMORY.md") and r["iteration"] != 0]   # bookkeeping and the harness's own spec tests are not the model's work
 
 
-def work_task(fm, ledger, memory, task, agent="root", web=None, max_iterations=4, max_tool_calls=12, say=None):
+def work_task(fm, ledger, memory, task, agent="root", web=None, max_iterations=4, max_tool_calls=12, say=None, propose=False):
     """Carry out one code task. Returns {'ok', 'summary', 'evidence'}; on failure the task's edits are rolled back (redo restores them)."""
     say = say or (lambda text: None)
+    ledger.sync_external()                           # files you changed by hand since the last record are noted, not refused
     text = f"{task.title} {task.detail} {task.done_when}"
     args = acceptance_args(task.done_when)
+    try:   # a step that gives examples gets its tests written by the harness, before the model starts (see agent/spec.py)
+        with ledger.scope(task=task.id, kind="test", iteration=0):
+            spec_path = ensure_spec_test(ledger, text, f"{task.done_when};{task.detail}")
+    except ActionError:
+        spec_path = None
+    if spec_path is None and propose and module_of(text):   # no examples given: ask the model for some, keep them with the task, and test against them
+        examples = join_examples(propose_examples(fm, f"{task.title}. {task.detail}"))
+        if examples:
+            try:
+                with ledger.scope(task=task.id, kind="test", iteration=0):
+                    spec_path = ensure_spec_test(ledger, text, examples)
+                    ledger.log_read("examples", task.id, {"proposed": True}, examples)
+                memory.set_done_when(task.id, examples)
+                say("  examples proposed: " + examples[:140])
+            except ActionError:
+                pass
     start_files = ledger._snapshot()                                               # the project as it is before any work
-    originals = {p: t for p, t in start_files.items() if is_test_path(p)}
+    written = ledger.written_by_tasks()
+    originals = {p: t for p, t in start_files.items() if is_test_path(p) and p not in written}   # tests an earlier task wrote may be extended
     roots = {p.split("/")[0].removesuffix(".py") for p in start_files if p.endswith(".py") and not is_test_path(p)}
     names = TOOLS + (("delete_file",) if any(w in text.lower() for w in ("delete", "remove")) else ()) + (("web_search", "fetch_url") if web else ())
     tools = [t for t in make_tools(ledger, web) if t.name in names]
@@ -54,6 +74,8 @@ def work_task(fm, ledger, memory, task, agent="root", web=None, max_iterations=4
 
     def prompt_for(failure, lean, it, tight=False):
         head = [f"Task {task.id}: {task.title}", task.detail, f"Done when: {('pytest ' + args).strip()} passes with at least one test"]
+        if spec_path:
+            head.append(f"The tests are already written in {spec_path}. Write only the code that makes them pass, and do not edit that file.")
         if earlier:
             head.append("Handoff from the agent before you:\n" + earlier)
         if tight:
@@ -105,19 +127,20 @@ def work_task(fm, ledger, memory, task, agent="root", web=None, max_iterations=4
             if hollow:
                 verdict.ok, verdict.reasons, custom = False, hollow, True
         if verdict.ok:
-            frozen_ok, why = frozen_check(ledger.root, originals)
+            frozen_ok, why = frozen_check(ledger.root, originals, args=args)
             if not frozen_ok:
                 verdict.ok, verdict.reasons, custom = False, [f"the original tests, unchanged, fail against your code:\n{why}"], True
         if verdict.ok and baseline.ok and any(not is_test_path(r["path"]) for r in mine):   # code changed on a green project: the new tests must start red
             red_ok, why = red_check(ledger.root, start_files)
             if not red_ok:
                 verdict.ok, verdict.reasons, custom = False, [why], True
-        record(it, verdict.ok, seq, "; ".join(verdict.reasons))
+        why = "; ".join(verdict.reasons)
+        new = why if custom else failure_summary(out) or why
+        record(it, verdict.ok, seq, why if new == why else f"{why} | {new}")   # the ledger row says what pytest reported, not only that it failed
         if verdict.ok:
             files = sorted({r["path"] for r in _edits_of_the_task(ledger, agent, task.id)})
             return {"ok": True, "summary": f"verified after {it} attempt(s); changed {', '.join(files)}",
                     "evidence": f"run #{seq}: pytest exit 0, {verdict.summary.get('passed')} passed"}
-        new = "; ".join(verdict.reasons) if custom else failure_summary(out) or "; ".join(verdict.reasons)
         stalls = stalls + 1 if (not rows and new == failure) else 0
         failure, last = new, verdict.reasons
         if stalls >= 2:
@@ -135,7 +158,7 @@ def _hand_off(ledger, memory, task, agent, originals, problems, failure, say):
     write down what is done and what is left, and queue a continuation task. Returns the step result, or None if that is not possible."""
     mine = _edits_of_the_task(ledger, agent, task.id)
     safe = (not syntax_errors(ledger.root, [r["path"] for r in mine]) and not protected_violations(ledger.root, originals)
-            and frozen_check(ledger.root, originals)[0])
+            and frozen_check(ledger.root, originals, args=acceptance_args(task.done_when))[0])
     done = ", ".join(sorted({r["path"] for r in mine})) if safe and mine else ""
     if not safe:
         ledger.undo_task(agent, task.id)

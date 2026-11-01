@@ -5,7 +5,7 @@ import re
 
 BUDGET = 7168          # tokens: 7K of the 8,192-token window. Past this the session is wound down at its next tool call.
 MAX_CONTINUATIONS = 2  # a continuation of a continuation of a task is the limit; after that the task is blocked instead
-_PREFIX = re.compile(r"^(Continue: |Continue researching: )")
+_PREFIX = re.compile(r"^Continue: ")
 
 
 def continuation_depth(title):

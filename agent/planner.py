@@ -1,9 +1,9 @@
 """Splits a big goal into many small tasks and stores the plan in MEMORY.md, so later sessions inherit it."""
 from .fm import Tool
 from .ledger import ActionError
-from .memory import Task, clean
+from .handoff import BUDGET
+from .memory import MAX_GOAL, Task, clean
 
-MAX_GOAL = 4000
 MAX_PER_SPLIT = 12
 INSTRUCTIONS = "You plan software work. Call add_task once per task, in the order the tasks should be done."
 
@@ -25,19 +25,20 @@ class FMBackend:
     def split(self, goal, context):
         found = []
 
-        def add_task(title, detail="", done_when="", big=False):
-            found.append({"title": title, "detail": detail, "done_when": done_when, "big": big})
+        def add_task(title, detail="", done_when="", big=False, kind="code"):
+            found.append({"title": title, "detail": detail, "done_when": done_when, "big": big, "kind": kind})
             return f"task {len(found)} added"
 
         tool = Tool("add_task", "Add one task to the plan. Set big=true if the task is still too large and needs splitting further.",
                     [_p("title", "string", "short task name"), _p("detail", "string", "what to do", True),
                      _p("done_when", "string", "how to tell it is done, e.g. a command or a visible result", True),
-                     _p("big", "boolean", "true if it still needs splitting", True)], add_task)
+                     _p("big", "boolean", "true if it still needs splitting", True),
+                     _p("kind", "string", "code (write or change code) or test (write tests for code)", True)], add_task)
         prompt = (f"Request: {goal}\n" + (f"Context: {context}\n" if context else "")
                   + "Split this request into 3 to 10 small, concrete tasks, in order. A task is small if it can be finished in one sitting "
                     "by editing a few files; otherwise set big=true. Prefer parts that automated tests can check: keep rules, scores and "
-                    "state in plain functions that need no keyboard or screen. Call add_task for each task.")
-        r = self.fm.run(prompt, [tool], INSTRUCTIONS, max_tool_calls=MAX_PER_SPLIT + 2)
+                    "state in plain functions that need no keyboard or screen. Label each task's kind so it is not rediscovered later. Call add_task for each task.")
+        r = self.fm.run(prompt, [tool], INSTRUCTIONS, max_tool_calls=MAX_PER_SPLIT + 2, budget_tokens=BUDGET)
         if "error" in r:
             raise PlanError(f"model error ({r['error']}): {r['message']}")
         return found
@@ -84,7 +85,7 @@ class Planner:
                 continue
             seen.add(title.casefold())
             budget[0] -= 1
-            out.append(Task(title, field("detail", 200), field("done_when", 200), kind="research"))   # each part is researched, then coded
+            out.append(Task(title, field("detail", 200), field("done_when", 200), kind=item.get("kind") if item.get("kind") in ("code", "test") else "code"))
             if item.get("big") is True and depth < self.max_depth:
                 big.append(out[-1])
         for task in big:                            # siblings claim their titles before anything is nested under them

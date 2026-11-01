@@ -413,6 +413,30 @@ class Ledger:
                     pass
         return files
 
+    def sync_external(self):
+        """Record every file that was changed outside the ledger (by hand or by another tool) since the ledger last recorded it, as an ordinary
+        undoable change marked 'modified externally' and attached to no task. Nothing refuses to run because of it. Returns their seqs."""
+        last = {r["path"]: r["post_hash"] for r in self.db.execute("SELECT path, post_hash FROM actions WHERE status='ok' AND path IS NOT NULL ORDER BY seq")}
+        out = []
+        for p, h in sorted(last.items()):
+            try:
+                now = self._read(self._resolve(p)[1])
+            except ActionError:
+                continue   # not text: the ledger cannot describe it
+            if self._hash(now) != h:
+                before = self._blob(h)
+                action, args = diff_action(p, before, now)
+                seq = self._commit(action, args, (p, before, *_plan(action, args, before)), write=False)
+                with self.db:
+                    self.db.execute("UPDATE actions SET element='modified externally', task_id=NULL, kind='external', iteration=NULL WHERE seq=?", (seq,))
+                out.append(seq)
+        return out
+
+    def written_by_tasks(self):
+        """Paths that a task has changed (not you, and not the harness's own spec tests): tests among them are the agent's to extend."""
+        return {r[0] for r in self.db.execute("SELECT DISTINCT path FROM actions WHERE status='ok' AND task_id IS NOT NULL AND path IS NOT NULL "
+                                              "AND (iteration IS NULL OR iteration != 0)")}
+
     def run_command(self, cmd, timeout=120, executor=None, replay_of=None):
         """Run a shell command and record it. Every text-file change it made is recorded as an ordinary,
         undoable action (cause = this command's seq). Not undoable itself, but `replay` re-runs it."""

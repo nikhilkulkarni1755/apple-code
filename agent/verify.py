@@ -100,6 +100,9 @@ def protected_violations(root, originals):
             out.append(f"deleted the existing test file {path}")
         elif Counter(l for l in before.splitlines() if l.strip() and not _IMPORT.match(l)) - Counter(now.splitlines()):
             out.append(f"changed existing test code in {path}")
+        elif any((root / f"{m.split('.')[0]}.py").is_file() for m in {l.split()[1] for l in before.splitlines() if _IMPORT.match(l)}
+                 - {l.split()[1] for l in now.splitlines() if _IMPORT.match(l)}):
+            out.append(f"removed an import from {path}")   # an import may be edited, but a project module the tests exercise must still be imported
     return out
 
 
@@ -123,10 +126,12 @@ def syntax_errors(root, paths):
     return out
 
 
-def frozen_check(root, originals, timeout=300):
+def frozen_check(root, originals, timeout=300, args=""):
     """Run the test files as they were before the task against the project as it is now, in a scratch copy, so a test that was
-    weakened by an inserted `return` or a skip still fails here. Returns (ok, failure_summary)."""
-    targets = [p for p in originals if p.endswith(".py") and (Path(p).name.startswith("test_") or p.endswith("_test.py"))]
+    weakened by an inserted `return` or a skip still fails here. `args` is the task's pytest arguments: if they name test files, only those
+    are run (tests for modules that are not written yet cannot be called regressions). Returns (ok, failure_summary)."""
+    named = {a.split("::")[0] for a in args.split() if ".py" in a}
+    targets = [p for p in originals if p.endswith(".py") and (Path(p).name.startswith("test_") or p.endswith("_test.py")) and (not named or p in named)]
     if not targets:
         return True, ""
     with tempfile.TemporaryDirectory() as scratch:

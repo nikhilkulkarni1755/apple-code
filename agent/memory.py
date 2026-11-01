@@ -14,8 +14,9 @@ _NAME = re.compile(r"^[A-Za-z][A-Za-z0-9 _/-]{0,39}$")
 _TASK = re.compile(r"^\s*- \[([ ~x!])\] (\d+(?:\.\d+)*) (.*)$")
 _DONE_WHEN = re.compile(r"\s*\(done when: (.*)\)$")
 _MARK = {"todo": " ", "doing": "~", "done": "x", "blocked": "!"}
-KINDS = ("research", "code")   # what a task is: look something up, or change something
-_KIND = re.compile(r"^\[(research|code)\] ")
+KINDS = ("research", "code", "test")   # what a task is: look something up, change something, or write tests for it
+_KIND = re.compile(r"^\[(research|code|test)\] ")
+MAX_GOAL = 15_000   # characters: a goal of about 2,000 words is kept whole, never cut
 
 
 @dataclass
@@ -73,7 +74,7 @@ def _sanitize(tasks):
         title = clean(t.title, 80) if isinstance(getattr(t, "title", None), str) else ""
         if title:
             text = lambda v, n: clean(v, n) if isinstance(v, str) else ""
-            out.append(Task(title, text(t.detail, 200), text(t.done_when, 200), t.status if t.status in _MARK else "todo",
+            out.append(Task(title, text(t.detail, MAX_GOAL), text(t.done_when, 200), t.status if t.status in _MARK else "todo",
                             children=_sanitize(t.children), kind=t.kind if t.kind in KINDS else ""))
     return out
 
@@ -205,7 +206,7 @@ class Memory:
         _rollup(plan)
         secs["Task plan"] = self._body("Task plan", render_tasks(plan))
         if goal is not None:
-            secs["Goals"] = self._body("Goals", (secs.get("Goals", "").replace(EMPTY, "") + "\n- " + clean(goal, 300)).strip("\n"))
+            secs["Goals"] = self._body("Goals", (secs.get("Goals", "").replace(EMPTY, "") + "\n- " + clean(goal, MAX_GOAL)).strip("\n"))
         if last is not None:
             secs["Last task completed"] = self._body("Last task completed", last)
         leaves = [t for t in _walk(plan) if not t.children]
@@ -214,6 +215,16 @@ class Memory:
         secs["Current state"] = self._body("Current state", f"{sum(t.status == 'done' for t in leaves)}/{len(leaves)} tasks done. "
                                            + (f"Next: {nxt.id} {nxt.title}" if nxt else f"Nothing left to do; {blocked} blocked." if blocked else "All tasks done."))
         return self._save(pre, secs)
+
+    def set_done_when(self, task_id, text):
+        """Write the acceptance text of a task (for example the examples a step was given) so that it survives a restart or a handoff."""
+        pre, secs = self._load()
+        plan = parse_tasks(secs.get("Task plan", ""))
+        task = next((t for t in _walk(plan) if t.id == task_id), None)
+        if task is None:
+            raise ActionError(f"no task {task_id!r}")
+        task.done_when = clean(text, 200) if isinstance(text, str) else ""
+        return self._save_plan(pre, secs, plan)
 
     def add_handoff(self, task_id, text):
         """Keep a note for whoever picks the task up next. One line per task id, newest wins."""
@@ -276,8 +287,9 @@ class Memory:
         """What a fresh model session should be told: project, goals, state, last task, and the next few tasks."""
         s = self.sections()
         todo = [t for t in _walk(self.tasks()) if not t.children and t.status in ("todo", "doing")][:5]
-        parts = [f"{n}: {s[n][:600]}" for n in ("Project", "Goals", "Design", "Current state", "Last task completed") if s.get(n)]
+        parts = [f"{n}: {s[n] if n == 'Goals' else s[n][:600]}" for n in ("Project", "Goals", "Design", "Current state", "Last task completed") if s.get(n)]
         if todo:
-            parts.append("Next tasks:\n" + "\n".join(render_tasks([Task(t.title, t.detail, t.done_when, t.status, t.id, kind=t.kind)]) for t in todo))
+            parts.append("Next tasks:\n" + "\n".join(render_tasks([Task(t.title, t.detail[:200], t.done_when, t.status, t.id, kind=t.kind)]) for t in todo))
         text = "\n".join(parts)
-        return text if len(text) <= max_chars else text[:max_chars - 1] + "…"
+        room = max_chars + len(s.get("Goals", ""))   # the goal is not counted: it is shown whole
+        return text if len(text) <= room else text[:room - 1] + "…"

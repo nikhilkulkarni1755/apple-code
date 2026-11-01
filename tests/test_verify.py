@@ -257,3 +257,20 @@ def test_red_check_changes_nothing_in_the_project(tmp_path):
     before = {p.name: p.read_text() for p in now.iterdir()}
     red_check(now, START)
     assert {p.name: p.read_text() for p in now.iterdir()} == before
+
+
+def test_tests_for_modules_not_written_yet_do_not_fail_the_check_of_the_named_file(tmp_path):
+    root = project(tmp_path, calc="def add(a, b):\n    return a + b\n\n\ndef sub(a, b):\n    return a - b\n")
+    both = {**ORIGINAL, "test_later.py": "from later import x\n\n\ndef test_x():\n    assert x() == 1\n"}
+    (root / "test_later.py").write_text(both["test_later.py"])
+    assert frozen_check(root, both)[0] is False
+    assert frozen_check(root, both, args="test_calc.py") == (True, "")
+
+
+def test_an_import_may_be_extended_but_not_replaced_by_code(tmp_path):
+    root = project(tmp_path)
+    assert protected_violations(root, {"test_calc.py": "from calc import add\n\n\ndef test_add():\n    assert add(1, 2) == 3\n"}) == []
+    (root / "test_calc.py").write_text("from calc import add, sub\n\n\ndef test_add():\n    assert add(1, 2) == 3\n")
+    assert protected_violations(root, {"test_calc.py": "from calc import add\n\n\ndef test_add():\n    assert add(1, 2) == 3\n"}) == []
+    (root / "test_calc.py").write_text("def add(a, b):\n    return a + b\n\n\ndef test_add():\n    assert add(1, 2) == 3\n")
+    assert protected_violations(root, {"test_calc.py": "from calc import add\n\n\ndef test_add():\n    assert add(1, 2) == 3\n"}) == ["removed an import from test_calc.py"]

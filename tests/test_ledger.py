@@ -182,3 +182,29 @@ def test_random_sequences_then_full_rewind_restore_start(ws, seed):
     L.rewind(0)
     assert snapshot(root) == start
     assert L.verify() == []
+
+
+def test_a_file_changed_outside_the_ledger_is_recorded_not_refused(tmp_path):
+    L = Ledger(tmp_path)
+    L.do("create_file", {"path": "a.py", "content": "x = 1\n"})
+    assert L.sync_external() == []
+    (tmp_path / "a.py").write_text("x = 2\n")
+    (tmp_path / "b.py").write_text("untracked\n")
+    (seq,) = L.sync_external()
+    r = L.get(seq)
+    assert r["element"] == "modified externally" and r["task_id"] is None and "x = 2" in r["added"]
+    assert L.sync_external() == []
+    L.undo(seq)
+    assert (tmp_path / "a.py").read_text() == "x = 1\n" and (tmp_path / "b.py").exists()
+    (tmp_path / "a.py").unlink()
+    assert len(L.sync_external()) == 1 and not (tmp_path / "a.py").exists()
+
+
+def test_paths_a_task_wrote_are_listed_but_not_its_iteration_zero_spec_tests(tmp_path):
+    L = Ledger(tmp_path)
+    with L.scope(task="1", iteration=0):
+        L.do("create_file", {"path": "test_spec.py", "content": "x\n"})
+    with L.scope(task="1", iteration=1):
+        L.do("create_file", {"path": "m.py", "content": "x\n"})
+    L.do("create_file", {"path": "by_hand.py", "content": "x\n"})
+    assert L.written_by_tasks() == {"m.py"}
