@@ -93,9 +93,12 @@ def research(fm, ledger, memory, task_id, web=None, spawn=None, max_tool_calls=8
         for t in found:                     # each title once in the whole plan, no kind of work on the same files twice in the whole plan
             t.title = t.detail if _junk_title(t.title) and t.detail else _tidy_title(t.title, files)   # 'write_slug' says nothing, its detail does
             if not _junk_title(t.title) and not _only_looks(t) and t.title.casefold() not in seen and not _repeats(t, done):
-                kept.append(t)
                 seen.add(t.title.casefold())
                 done.append(_work(t))
+                if t.kind == "test" and kept and kept[-1].kind == "code":   # a code step and the tests right after it are one unit of work for one session
+                    kept[-1].detail = (kept[-1].detail + ". " if kept[-1].detail else "") + f"Also {t.title}"
+                    continue
+                kept.append(t)
         kept = kept[:max(0, MAX_STEPS - len(task.children))]
         steps_found = len(kept)
         if kept:
