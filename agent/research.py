@@ -49,6 +49,11 @@ def _only_looks(item):
     return bool(re.match(r"(?:[\w./-]+:\s*)?research\b", item.title, re.I)) or not _work(item)[1]
 
 
+def _modules(item):
+    """The modules a step is about: slugs.py and tests/test_slugs.py are both 'slugs'."""
+    return {Path(f).stem.removeprefix("test_") for f in _work(item)[1] if f.endswith(".py")}
+
+
 def _repeats(item, done):
     kind, files = _work(item)
     return bool(files) and any(k == kind and f and (files <= f or f <= files) for k, f in done)   # the same files, or some of them, for the same kind of work
@@ -95,8 +100,11 @@ def research(fm, ledger, memory, task_id, web=None, spawn=None, max_tool_calls=8
             if not _junk_title(t.title) and not _only_looks(t) and t.title.casefold() not in seen and not _repeats(t, done):
                 seen.add(t.title.casefold())
                 done.append(_work(t))
-                if t.kind == "test" and kept and kept[-1].kind == "code":   # a code step and the tests right after it are one unit of work for one session
-                    kept[-1].detail = (kept[-1].detail + ". " if kept[-1].detail else "") + f"Also {t.title}"
+                mate = next((k for k in kept if {k.kind, t.kind} == {"code", "test"} and _modules(k) & _modules(t)), None)
+                if mate:   # a code step and the tests for the same module are one unit of work for one session, in whichever order they were listed
+                    code, test = (mate, t) if mate.kind == "code" else (t, mate)
+                    code.detail = (code.detail + ". " if code.detail else "") + f"Also {test.title}"
+                    kept[kept.index(mate)] = code
                     continue
                 kept.append(t)
         kept = kept[:max(0, MAX_STEPS - len(task.children))]

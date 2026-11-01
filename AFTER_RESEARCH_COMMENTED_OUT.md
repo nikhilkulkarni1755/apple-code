@@ -78,3 +78,18 @@ Planned edits for the next cycle (one PR each): (G) sample at a higher temperatu
 - **G (PR #9):** from the second attempt on, the model is sampled at temperature 0.8 (first attempt at the default).
 - **H (PR #10):** a syntax error message ends with the offending line's text.
 - **I:** any step that names no file (`finalize round 1 and round 2`) is dropped, not only test steps.
+
+## Rerun round 3 (after edits G, H, I) — P1, P2, P3 once each
+| Prompt | Result | Time | What was verified |
+|---|---|---|---|
+| P1 | not solved | 922 s (cap; a long session started before the deadline) | `slugs.py` written but wrong; `words.py` never reached; 1 handoff, 2 hard `context_overflow` |
+| P2 | **closest so far**: `inventory.py` and `report.py` both written and verified on the first attempt, tests for Inventory verified | 324 s | the independent check failed: `report(inventory)` iterates the `Inventory` object, the check passes an `Inventory` (the model's own tests passed lists) |
+| P3 | not solved | 740 s | `tokens.py` written; `calc.py` never reached; 2 handoffs nested to `1.1.1.1` |
+
+Observations:
+1. **Plan-the-rest and the file-name rule work as intended.** No filler steps. P2's plan had both modules as separate single steps plus tests for existing code.
+2. **Test-first plans escape the merge.** P3's plan listed `tests/test_tokens.py` before `tokens.py`, so the test step stood alone (the merge only looked at a test step *after* a code step) and got worked first, with no code to pass against: it spent 3 handoffs (`1.1`, `1.1.1`, `1.1.1.1`).
+3. **The exact wording of the requirement is not in the step.** The step said "write report function in report.py"; the goal says `report(inventory)` returns "name: qty" strings sorted by name, skipping zero stock. The model built a function over a list and tested that. The sentence is only in the Notes' Goals text.
+4. Hint effects: G (temperature) changed the failures between attempts (P1 1.1: `helloworld`, then `hello-world-`), H showed the bad line (`in \`def test_slugify_punctuation():\``), but the model rarely used either to fix the code.
+
+Planned edits for the next cycle (one PR each): (K) pair a code step with the tests for the same module in any order and position (by module name: `slugs.py` and `tests/test_slugs.py`); (J) append to each step the sentences of the goal that mention the step's files, so the worker gets the exact wording in its task text.

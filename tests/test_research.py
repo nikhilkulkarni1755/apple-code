@@ -387,3 +387,15 @@ def test_a_test_step_right_after_a_code_step_joins_it_as_one_unit_of_work(env):
     assert [(k.kind, k.detail) for k in m.tasks()[0].children] == [("code", "Also Write tests in tests/test_slugs.py"), ("code", "Also Write tests in tests/test_words.py")]
     script2 = lambda t: t["add_actionable"](title="Write tests in tests/test_extra.py", kind="test")                  # tests for code that exists stay a test step
     assert research(FakeFM(script2), L, m, "1")["added"] == 1 and m.tasks()[0].children[-1].kind == "test"
+
+
+def test_code_and_tests_of_the_same_module_pair_up_in_any_order_but_other_modules_do_not(env):
+    _, L, m = env
+    steps = (("Write tests in tests/test_tokens.py", "test"), ("Write tokenize in tokens.py", "code"),          # tests listed first
+             ("Write evaluate in calc.py", "code"), ("Write word_count in words.py", "code"),                    # other code in between
+             ("Write tests in tests/test_calc.py", "test"), ("Write tests in tests/test_other.py", "test"))      # a test with no code of its own
+    script = lambda t: [t["add_actionable"](title=a, kind=k) for a, k in steps]
+    assert research(FakeFM(script), L, m, "1")["added"] == 4
+    assert [(k.kind, k.title, k.detail) for k in m.tasks()[0].children] == [
+        ("code", "Write tokenize in tokens.py", "Also Write tests in tests/test_tokens.py"), ("code", "Write evaluate in calc.py", "Also Write tests in tests/test_calc.py"),
+        ("code", "Write word_count in words.py", ""), ("test", "Write tests in tests/test_other.py", "")]
