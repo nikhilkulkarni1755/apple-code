@@ -295,13 +295,13 @@ def test_web_tools_are_never_offered_to_the_planner(env):
 def test_the_goal_is_planned_into_a_flat_list_and_every_step_is_worked_not_planned_again(env):
     _, L, m = env
     worked = []
-    step = research_step(FakeFM(lambda t: [t["add_actionable"](title=x, kind=k) for x, k in (("Write sub() in calc.py", "code"), ("Write tests in test_sub.py", "test"))]),
+    step = research_step(FakeFM(lambda t: [t["add_actionable"](title=x, kind=k) for x, k in (("Write sub() in calc.py", "code"), ("Write mul() in mul.py", "code"))]),
                          worker=lambda ctx, task: worked.append(task.id) or {"ok": True, "summary": "ok"})
     assert step(Ctx(L, m), m.tasks()[0]) == {"ok": True, "summary": "2 steps, 0 subagents"}
     step(Ctx(L, m), m.next_task())
     m.complete("1.1", "ok")
     step(Ctx(L, m), m.next_task())
-    assert worked == ["1.1", "1.2"] and [(k.id, k.kind) for k in m.tasks()[0].children] == [("1.1", "code"), ("1.2", "test"), ("1.3", "research")]
+    assert worked == ["1.1", "1.2"] and [(k.id, k.kind) for k in m.tasks()[0].children] == [("1.1", "code"), ("1.2", "code"), ("1.3", "research")]
     assert not any(k.children for k in m.tasks()[0].children)
 
 
@@ -380,3 +380,13 @@ def test_steps_that_research_or_test_no_file_are_dropped(env):
         ("inventory.py: research stock counts", "", "code"), ("tests/full_check: run everything", "", "test"),
         ("Write tests", "in tests/test_inventory.py", "test"), ("Create research.py", "", "code"))]
     assert research(FakeFM(script), L, m, "1")["added"] == 2 and [k.title for k in m.tasks()[0].children] == ["Write tests", "Create research.py"]
+
+
+def test_a_test_step_right_after_a_code_step_joins_it_as_one_unit_of_work(env):
+    _, L, m = env
+    script = lambda t: [t["add_actionable"](title=a, kind=k) for a, k in (("Write slugify in slugs.py", "code"), ("Write tests in tests/test_slugs.py", "test"),
+                                                                           ("Write word_count in words.py", "code"), ("Write tests in tests/test_words.py", "test"))]
+    assert research(FakeFM(script), L, m, "1")["added"] == 2
+    assert [(k.kind, k.detail) for k in m.tasks()[0].children] == [("code", "Also Write tests in tests/test_slugs.py"), ("code", "Also Write tests in tests/test_words.py")]
+    script2 = lambda t: t["add_actionable"](title="Write tests in tests/test_extra.py", kind="test")                  # tests for code that exists stay a test step
+    assert research(FakeFM(script2), L, m, "1")["added"] == 1 and m.tasks()[0].children[-1].kind == "test"

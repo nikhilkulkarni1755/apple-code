@@ -56,3 +56,4 @@ Planned edits for the next cycle (one PR each): (D) normalize the model's `run_t
 ### Edits made after rerun round 1
 - **D (PR #6):** `run_tests` drops a leading `pytest` / `python -m pytest` and finds a bare test file under `tests/`.
 - **E:** when a failure is `NameError: name 'X' is not defined` and a top-level module defines `X`, the next prompt gets `Hint: add \`from <module> import X\` at the top of the test file`.
+- **F (code and its tests are one step):** the planner is asked for this in so many words, but the model ignored the instruction on two replays (it still listed code and test steps separately). So the harness does it: a `test` step that comes right after a `code` step in the same planning pass is appended to that step's detail (`Also write tests ...`) and no longer a step of its own. A test step with no code step before it (tests for existing code) stays a step. The instruction was left as it was.
