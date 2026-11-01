@@ -721,3 +721,17 @@ def test_real_model_is_never_certified_falsely(tmp_path, attempt):
         assert [r["status"] for r in L.list() if r["action"] == "verify"][-1] == "ok"
     else:                                                                               # not certified: then nothing was left behind
         assert {k: v for k, v in snapshot(root).items() if k != "MEMORY.md"} == start
+
+
+def test_a_retry_sees_the_files_as_they_are_now_including_the_ones_the_failure_names(tmp_path):
+    root = tmp_path / "ws"
+    root.mkdir()
+    L = Ledger(root)
+    m = Memory(L)
+    m.add_plan("g", [Task("Make words", "write words.py", kind="code")])
+    wrong = lambda t, p=None: (t["create_file"](path="words.py", content="def words(t):\n    return t\n"),
+                               t["create_file"](path="test_words.py", content="from words import words\n\n\ndef test_words():\n    assert words('a b') == ['a', 'b']\n"))
+    fm = FakeFM([wrong, idle])
+    work_task(fm, L, m, m.tasks()[0], max_iterations=2)
+    assert "The project has no files yet." in fm.prompts[0]
+    assert "The project has no files yet." not in fm.prompts[1] and "Contents of words.py:\ndef words(t):\n    return t" in fm.prompts[1]

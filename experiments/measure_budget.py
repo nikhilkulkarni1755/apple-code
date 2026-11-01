@@ -4,6 +4,7 @@ it also records when a new agent was needed (a session wound down, a continuatio
 Run from the repo root:  .venv/bin/python -m experiments.measure_budget THRESHOLD OUT.json CHECK.py [PROMPT1.md]"""
 import json
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -53,7 +54,7 @@ class Meter:
         self.sessions.append({"role": role(tools), "tools": start["tools"], "instructions": start["instructions"], "prompt": start["prompt"],
                               "start": start["tools"] + start["instructions"] + start["prompt"], "wrote": wrote, "tokens": r.get("tokens"),
                               "estimated": r.get("estimated"), "reason": r.get("reason"), "error": r.get("error"), "calls": len(r.get("calls", [])),
-                              "secs": round(time.time() - t0, 1), "after_seq": self.ledger.db.execute("SELECT max(seq) FROM actions").fetchone()[0]})
+                              "secs": round(time.time() - t0, 1), "prompt": prompt, "log": [(n, a, str(res)[:300]) for n, a, res in r.get("calls", [])], "after_seq": self.ledger.db.execute("SELECT max(seq) FROM actions").fetchone()[0]})
         return r
 
 
@@ -90,4 +91,5 @@ finally:
                                "first_wind_down_cumulative": first_wind, "first_handoff_cumulative": first_handoff, "handoffs": len(handoffs),
                                "plan": plan, "solved": check.returncode == 0, "check": (check.stdout + check.stderr)[-300:],
                                "solution_tokens": written, "files": sorted(p.name for p in root.iterdir() if not p.name.startswith("."))}, indent=1))
+    shutil.copytree(root, OUT.with_suffix(".dir"), dirs_exist_ok=True, ignore=shutil.ignore_patterns("__pycache__", ".pytest_cache"))   # the ledger and the files, to look through afterwards
     real.close()
