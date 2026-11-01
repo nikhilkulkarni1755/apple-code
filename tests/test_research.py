@@ -338,11 +338,11 @@ def test_a_step_that_repeats_the_work_of_an_existing_one_is_dropped_whatever_its
     assert research(FakeFM(first), L, m, "1")["added"] == 1
     again = lambda t: [t["add_actionable"](title=x, detail=d, kind=k) for x, d, k in (
         ("Implement the slug function", "put it in slugs.py", "code"),            # same kind, same file: a repeat
-        ("Write tests in tests/test_slugs.py", "for slugs.py", "test"),           # another kind and file: new
+        ("Write tests in tests/test_slugs.py", "for slugs.py", "test"),           # tests of a module that has a code step: dropped
         ("Cover slugify in tests/test_slugs.py", "", "test"),                      # a repeat of the one above
         ("Write words.py", "", "code"))]                                           # a different file: new
     r = research(FakeFM(again), L, m, "1")
-    assert (r["added"], r["dropped"]) == (2, 2) and [k.id for k in m.tasks()[0].children] == ["1.1", "1.2", "1.3"]
+    assert (r["added"], r["dropped"]) == (1, 3) and [k.id for k in m.tasks()[0].children] == ["1.1", "1.2"]
 
 
 def test_a_goal_never_gets_more_than_max_steps_so_the_next_goal_is_reached(env):
@@ -414,3 +414,11 @@ def test_a_step_carries_the_sentences_of_the_goal_that_name_its_files(tmp_path):
     first, second = m.tasks()[0].children
     assert first.detail == "Spec: Round 1: write slugify(text) in slugs.py (lowercase, joined by hyphens), then write tests in tests/test_slugs.py."
     assert second.detail == "a report. Spec: Round 2: write report(inventory) in report.py that returns name: qty strings sorted by name."
+
+
+def test_a_test_only_step_for_a_module_that_already_has_a_code_step_is_dropped(env):
+    _, L, m = env
+    assert research(FakeFM(lambda t: t["add_actionable"](title="Write slugify in slugs.py with tests in tests/test_slugs.py", kind="code")), L, m, "1")["added"] == 1
+    script = lambda t: [t["add_actionable"](title="Update tests/test_slugs.py", kind="test"), t["add_actionable"](title="Write tests in tests/test_words.py", kind="test")]
+    r = research(FakeFM(script), L, m, "1")
+    assert r["added"] == 1 and m.tasks()[0].children[-1].title == "Write tests in tests/test_words.py"

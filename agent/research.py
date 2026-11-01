@@ -100,10 +100,11 @@ def research(fm, ledger, memory, task_id, web=None, spawn=None, max_tool_calls=8
         ledger.log_session(r)
         seen = {c.title.casefold() for c in _walk(memory.tasks())}
         done = [w for w in map(_work, _walk(memory.tasks())) if w[1]]
+        covered = {m for c in _walk(memory.tasks()) if c.kind == "code" for m in _modules(c)}   # modules whose code step already includes their tests
         kept = []
         for t in found:                     # each title once in the whole plan, no kind of work on the same files twice in the whole plan
             t.title = t.detail if _junk_title(t.title) and t.detail else _tidy_title(t.title, files)   # 'write_slug' says nothing, its detail does
-            if not _junk_title(t.title) and not _only_looks(t) and t.title.casefold() not in seen and not _repeats(t, done):
+            if not _junk_title(t.title) and not _only_looks(t) and not (t.kind == "test" and _modules(t) & covered) and t.title.casefold() not in seen and not _repeats(t, done):
                 seen.add(t.title.casefold())
                 done.append(_work(t))
                 mate = next((k for k in kept if {k.kind, t.kind} == {"code", "test"} and _modules(k) & _modules(t)), None)
