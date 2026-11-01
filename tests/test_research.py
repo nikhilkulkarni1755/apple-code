@@ -396,6 +396,21 @@ def test_code_and_tests_of_the_same_module_pair_up_in_any_order_but_other_module
              ("Write tests in tests/test_calc.py", "test"), ("Write tests in tests/test_other.py", "test"))      # a test with no code of its own
     script = lambda t: [t["add_actionable"](title=a, kind=k) for a, k in steps]
     assert research(FakeFM(script), L, m, "1")["added"] == 4
-    assert [(k.kind, k.title, k.detail) for k in m.tasks()[0].children] == [
+    assert [(k.kind, k.title, k.detail.split(". Spec")[0]) for k in m.tasks()[0].children] == [
         ("code", "Write tokenize in tokens.py", "Also Write tests in tests/test_tokens.py"), ("code", "Write evaluate in calc.py", "Also Write tests in tests/test_calc.py"),
         ("code", "Write word_count in words.py", ""), ("test", "Write tests in tests/test_other.py", "")]
+
+
+def test_a_step_carries_the_sentences_of_the_goal_that_name_its_files(tmp_path):
+    root = tmp_path / "ws"
+    root.mkdir()
+    L = Ledger(root)
+    m = Memory(L)
+    goal = ("Round 1: write slugify(text) in slugs.py (lowercase, joined by hyphens), then write tests in tests/test_slugs.py. "
+            "Round 2: write report(inventory) in report.py that returns name: qty strings sorted by name.")
+    m.add_plan(goal, [Task("Plan: goal", goal, kind="research")])
+    script = lambda t: [t["add_actionable"](title="write the slug function in slugs.py", kind="code"), t["add_actionable"](title="write report in report.py", detail="a report", kind="code")]
+    research(FakeFM(script), L, m, "1")
+    first, second = m.tasks()[0].children
+    assert first.detail == "Spec: Round 1: write slugify(text) in slugs.py (lowercase, joined by hyphens), then write tests in tests/test_slugs.py."
+    assert second.detail == "a report. Spec: Round 2: write report(inventory) in report.py that returns name: qty strings sorted by name."

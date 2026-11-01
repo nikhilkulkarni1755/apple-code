@@ -93,3 +93,7 @@ Observations:
 4. Hint effects: G (temperature) changed the failures between attempts (P1 1.1: `helloworld`, then `hello-world-`), H showed the bad line (`in \`def test_slugify_punctuation():\``), but the model rarely used either to fix the code.
 
 Planned edits for the next cycle (one PR each): (K) pair a code step with the tests for the same module in any order and position (by module name: `slugs.py` and `tests/test_slugs.py`); (J) append to each step the sentences of the goal that mention the step's files, so the worker gets the exact wording in its task text.
+
+### Edits made after rerun round 3
+- **K (PR #12):** a code step and the tests for the same module (`slugs.py` / `tests/test_slugs.py`) pair up in any order and position.
+- **J:** each step's detail gets `Spec: <the goal's sentences that name the step's files>` (at most 700 characters), so the worker sees the exact wording (`report(inventory)`, `name: qty strings`, `lowercase, joined by hyphens`) in the task text itself.

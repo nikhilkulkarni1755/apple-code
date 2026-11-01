@@ -54,6 +54,12 @@ def _modules(item):
     return {Path(f).stem.removeprefix("test_") for f in _work(item)[1] if f.endswith(".py")}
 
 
+def _spec(goal, item):
+    """The sentences of the goal that name the step's files: the exact wording the code has to meet (the model's own paraphrase drops it)."""
+    names = {Path(f).name for f in _work(item)[1]}
+    return " ".join(x for x in re.split(r"(?<=[.;])\s+", goal or "") if any(n in x for n in names))[:700]
+
+
 def _repeats(item, done):
     kind, files = _work(item)
     return bool(files) and any(k == kind and f and (files <= f or f <= files) for k, f in done)   # the same files, or some of them, for the same kind of work
@@ -108,6 +114,9 @@ def research(fm, ledger, memory, task_id, web=None, spawn=None, max_tool_calls=8
                     continue
                 kept.append(t)
         kept = kept[:max(0, MAX_STEPS - len(task.children))]
+        for t in kept:
+            if spec := _spec(task.detail, t):
+                t.detail = (t.detail + ". " if t.detail else "") + f"Spec: {spec}"
         steps_found = len(kept)
         if kept:
             memory.add_children(task_id, kept)   # kept even if the model later ran out of context
