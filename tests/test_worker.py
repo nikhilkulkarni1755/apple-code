@@ -805,3 +805,10 @@ def test_whole_file_mode_writes_only_files_the_goal_names(fresh):
     fm = FakeFM([reply(SLUG), reply(SLUG_TESTS)])
     work_task(fm, L, m, task, whole=True, max_iterations=1)
     assert not (root / "slug_slugs.py").exists() and (root / "slugs.py").exists()
+
+
+def test_a_whole_file_retry_is_told_the_task_is_the_truth_and_a_test_may_be_wrong(fresh):
+    root, L, m, task = fresh
+    fm = FakeFM([reply(SLUG.replace("'-'", "''")), reply(SLUG_TESTS), reply(SLUG), reply(SLUG_TESTS)])
+    work_task(fm, L, m, task, whole=True)
+    assert "the task and its Spec are the truth" not in fm.prompts[0] and "the task and its Spec are the truth" in fm.prompts[2]
