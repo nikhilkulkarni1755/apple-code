@@ -24,6 +24,31 @@ def test_ordinary_examples_are_accepted_and_normalised(text, expected):
     assert parse_examples(text) == expected
 
 
+@pytest.mark.parametrize("text,expected", [
+    ("For example total(2, 3) == 5, total(-1, 1) == 0, and average([]) == 0.0. Its tests are in tests/test_maths.py.",
+     ["total(2, 3) == 5", "total(-1, 1) == 0", "average([]) == 0.0"]),
+    ("f(1, 2) == 3, g(0) == [1, 2]", ["f(1, 2) == 3", "g(0) == [1, 2]"]),
+    ("remove('apple', 9) raises ValueError", ["remove('apple', 9) raises ValueError"]),
+    ("for example c = Counter(5) then c.add(2) then c.value() == 7, then c.reset() then c.value() == 5, and Counter().value() == 0",
+     ["c = Counter(5) then c.add(2) then c.value() == 7 then c.reset() then c.value() == 5", "Counter().value() == 0"]),
+    ("c = Counter(5) then add two then c.value() == 7", []),          # one step that is not code voids the example: it is never run with a step missing
+    ("c = Counter(5) then c.add(2)", []),                              # a sequence must end in a check
+    ("Create sub(a, b) in calc.py", []), ("f(1) raises Nonsense", []),   # prose that parses as Python is not an example
+    ("pop() == 2", ["pop() == 2"]), ("image.size == (1, 2) then f(image) == 3", []), ("f(image) == 3", []),   # a name set up nowhere: the test could only fail
+    ("from PIL import Image then to_gray(Image.new('L', (1, 1))).mode == 'L'", ["from PIL import Image then to_gray(Image.new('L', (1, 1))).mode == 'L'"]),
+    ("from os import system then system('ls') == 0", []),
+])
+def test_examples_are_found_in_sentences_and_can_be_steps_in_a_row_or_an_expected_error(text, expected):
+    assert parse_examples(text) == expected
+
+
+def test_the_test_file_carries_out_each_step_in_order_and_expects_the_error():
+    got = render_test("stack", parse_examples("s = Stack() then s.push(1) then s.pop() == 1; Stack().pop() raises IndexError"))
+    assert got == ("import pytest\nfrom stack import Stack\n\n\ndef test_spec_1():\n    s = Stack()\n    s.push(1)\n    assert s.pop() == 1\n\n\n"
+                   "def test_spec_2():\n    with pytest.raises(IndexError):\n        Stack().pop()\n")
+    compile(got, "t.py", "exec")
+
+
 HOSTILE = [
     "__import__('os').system('echo pwned') == 0", "open('/etc/passwd').read() == ''", "eval('1') == 1", "exec('x=1') == None", "compile('1','','eval') == 1",
     "getattr(f, 'x') == 1", "setattr(f, 'x', 1) == None", "globals() == {}", "locals() == {}", "vars(f) == {}", "input() == ''", "breakpoint() == None",

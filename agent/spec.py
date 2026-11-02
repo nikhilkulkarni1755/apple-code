@@ -10,8 +10,9 @@ import re
 from .fm import Tool
 
 MAX_EXAMPLES = 8
-MAX_LENGTH = 200
-_NODES = (ast.Expression, ast.Compare, ast.Call, ast.Attribute, ast.Name, ast.Constant, ast.Tuple, ast.List, ast.Dict, ast.Set, ast.UnaryOp,
+MAX_LENGTH = 400
+_IMPORTABLE = {"PIL", "numpy", "sklearn", "pydicom", "math", "re", "json", "datetime", "collections", "itertools", "functools", "string", "decimal", "fractions", "statistics"}   # an example may import these
+_NODES = (ast.Module, ast.Expr, ast.Assign, ast.Store, ast.ImportFrom, ast.Import, ast.alias, ast.Expression, ast.Compare, ast.Call, ast.Attribute, ast.Name, ast.Constant, ast.Tuple, ast.List, ast.Dict, ast.Set, ast.UnaryOp,
           ast.BinOp, ast.BoolOp, ast.Subscript, ast.Slice, ast.keyword, ast.Load, ast.cmpop, ast.operator, ast.unaryop, ast.boolop)
 _BANNED = {"open", "eval", "exec", "compile", "input", "getattr", "setattr", "delattr", "globals", "locals", "vars", "breakpoint", "exit", "quit",
            "help", "memoryview", "print", "os", "sys", "subprocess", "shutil", "importlib", "socket", "pathlib", "builtins", "pty", "ctypes",
@@ -33,19 +34,74 @@ def _safe(tree):
     return True
 
 
+def _split(text, pattern):
+    """`text` cut where `pattern` matches outside brackets and quotes, so 'f(1, 2) == 3' is not cut at its comma."""
+    depth, quote, mask = 0, "", []
+    for c in text:
+        inside = bool(depth or quote)
+        if quote:
+            quote = "" if c in (quote, "\n") else quote
+        elif c in "'\"":
+            quote, inside = c, True
+        elif c in "([{":
+            depth, inside = depth + 1, True
+        elif c in ")]}":
+            depth = max(depth - 1, 0)
+        mask.append("_" if inside else c)
+    cuts = [(0, 0)] + [m.span() for m in re.finditer(pattern, "".join(mask))] + [(len(text), len(text))]
+    return [text[a[1]:b[0]] for a, b in zip(cuts, cuts[1:])]
+
+
+_RAISES = re.compile(r"^(.+\)) raises ([A-Z]\w*)$")
+_THEN = r"\bthen\b"
+
+
+def _statement(part):
+    """One step of an example as (source, kind), or None. kind is 'check' for a comparison ('f(1) == 2'), 'raises' for 'f(0) raises ValueError',
+    'step' for a call or an assignment that sets things up."""
+    part = part.strip().strip("`").rstrip(",.").strip()
+    raises = _RAISES.match(part)
+    try:
+        tree = ast.parse(raises.group(1) if raises else part)
+    except (SyntaxError, ValueError, RecursionError):
+        return None
+    node = tree.body[0] if len(tree.body) == 1 else None
+    if isinstance(node, (ast.Import, ast.ImportFrom)):   # `from PIL import Image`: a step that sets things up
+        modules = [a.name for a in node.names] if isinstance(node, ast.Import) else [node.module or ""]
+        return (ast.unparse(node), "step") if getattr(node, "level", 0) == 0 and all(m.split(".")[0] in _IMPORTABLE for m in modules) else None
+    if node is None or not _safe(tree):
+        return None
+    if raises:
+        return (f"{ast.unparse(node)} raises {raises.group(2)}", "raises") if isinstance(node, ast.Expr) and isinstance(node.value, ast.Call) and hasattr(builtins, raises.group(2)) else None
+    if isinstance(node, ast.Assign):
+        return ast.unparse(node), "step"
+    if not isinstance(node, ast.Expr):
+        return None
+    if isinstance(node.value, ast.Compare):   # a comparison needs a plain value on one side: prose such as 'sub(a, b) in calc.py' is not an example
+        plain = any(not any(isinstance(m, (ast.Call, ast.Name)) for m in ast.walk(o)) for o in [node.value.left, *node.value.comparators])
+        return (ast.unparse(node), "check") if plain else None
+    return (ast.unparse(node), "step") if isinstance(node.value, ast.Call) else None
+
+
+def _example(piece):
+    """An example as text, or None: steps joined by ' then ' (`c = Counter(5) then c.add(2) then c.value() == 7`), the last one a check and one of them a call.
+    One step that is not code makes the whole example void, so a step is never silently skipped."""
+    first, *rest = _split(piece, _THEN)
+    head = next((st for i in [0, *(w.start() for w in re.finditer(r"(?<![\w.])[A-Za-z_]", first))] if (st := _statement(first[i:]))), None)   # prose may come first
+    steps = [head, *map(_statement, rest)]
+    if None in steps or steps[-1][1] == "step":
+        return None
+    example = " then ".join(s for s, _ in steps)
+    lines = _lines(example)
+    return None if _needs(lines)[1] or not any(isinstance(n, ast.Call) for n in ast.walk(ast.parse("\n".join(lines)))) else example   # it uses a name that is set up nowhere ('image', or 'pop()' with no stack): the test could only fail
+
+
 def parse_examples(text):
-    """The usable examples in `text`: comparisons separated by ';' or new lines, e.g. 'f(1) == 2; f(0) == 0'. Anything else is dropped."""
+    """The usable examples in `text`, in a list or in a sentence ('for example f(1) == 2, f(0) raises ValueError'). Anything else is dropped."""
     out = []
-    for piece in re.split(r"[;\n]", text or ""):
-        piece = piece.strip().strip("`").strip()
-        if not piece or len(piece) > MAX_LENGTH:
-            continue
-        try:
-            tree = ast.parse(piece, mode="eval")
-        except (SyntaxError, ValueError, RecursionError):
-            continue
-        if isinstance(tree.body, ast.Compare) and _safe(tree) and any(isinstance(n, ast.Call) for n in ast.walk(tree)):
-            out.append(ast.unparse(tree))
+    for piece in _split(text or "", r"[;\n]|,(?!\s*then\b)|\.(?=\s|$)|\band\b"):
+        if len(piece.strip()) <= MAX_LENGTH and (ex := _example(piece)):
+            out.append(ex)
         if len(out) >= MAX_EXAMPLES:
             break
     return list(dict.fromkeys(out))
@@ -80,13 +136,32 @@ def module_of(text):
     return None
 
 
+def _lines(example):
+    """The lines of a test that carry out one example."""
+    out = []
+    for part in _split(example, _THEN):
+        src, kind = _statement(part)
+        call = _RAISES.match(src)
+        out += [f"with pytest.raises({call[2]}):", f"    {call[1]}"] if call else [f"assert {src}" if kind == "check" else src]
+    return out
+
+
+def _needs(lines):
+    """(names a test made of these lines must import from the module under test: the functions and classes it calls, names nothing defines)."""
+    nodes = list(ast.walk(ast.parse("\n".join(lines))))
+    have = {*dir(builtins), "pytest", *(n.id for n in nodes if isinstance(n, ast.Name) and not isinstance(n.ctx, ast.Load)),
+            *((a.asname or a.name).split(".")[0] for n in nodes if isinstance(n, (ast.Import, ast.ImportFrom)) for a in n.names)}
+    calls = {n.func.id for n in nodes if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)} - have
+    return calls, {n.id for n in nodes if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)} - have - calls
+
+
 def render_test(module, examples):
     """The text of a pytest file for these (already parsed) examples."""
-    names = sorted({n.id for ex in examples for n in ast.walk(ast.parse(ex, mode="eval")) if isinstance(n, ast.Name)
-                    and isinstance(n.ctx, ast.Load) and not hasattr(builtins, n.id)})
-    lines = [f"from {module} import {', '.join(names)}" if names else f"import {module}", "", ""]
-    for i, ex in enumerate(examples, 1):
-        lines += [f"def test_spec_{i}():", f"    assert {ex}", "", ""]
+    bodies = [_lines(ex) for ex in examples]
+    names = sorted(set().union(*(_needs(b)[0] for b in bodies)))
+    lines = (["import pytest"] if any("pytest.raises" in l for b in bodies for l in b) else []) + [f"from {module} import {', '.join(names)}" if names else f"import {module}", "", ""]
+    for i, body in enumerate(bodies, 1):
+        lines += [f"def test_spec_{i}():", *(f"    {l}" for l in body), "", ""]
     return "\n".join(lines).rstrip("\n") + "\n"
 
 

@@ -1,6 +1,6 @@
 mkdir vague-classes && cd vague-classes
 
-apple-code solve "Write four small Python files. counter.py has a Counter class with add, value and reset. stack.py has a Stack class with push, pop, peek, size and is_empty. inventory.py has an Inventory class with add, remove, count, total and names. report.py has a report function that takes an Inventory and lists what is in stock. Put the tests in tests/test_counter.py, tests/test_stack.py, tests/test_inventory.py and tests/test_report.py."
+apple-code solve "Write four small Python files. counter.py has a Counter class with add, value and reset, for example c = Counter() then c.add(2) then c.value() == 2. stack.py has a Stack class with push, pop, peek, size and is_empty, for example s = Stack() then s.push(1) then s.push(2) then s.pop() == 2. inventory.py has an Inventory class with add, remove, count, total and names, for example i = Inventory() then i.add('apple', 3) then i.count('apple') == 3. report.py has a report function that takes an Inventory and lists what is in stock, for example i = Inventory() then i.add('pear', 4) then report(i) == ['pear: 4']. Put the tests in tests/test_counter.py, tests/test_stack.py, tests/test_inventory.py and tests/test_report.py."
 
 apple-code test tests
 
