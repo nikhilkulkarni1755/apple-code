@@ -107,6 +107,25 @@ def parse_examples(text):
     return list(dict.fromkeys(out))
 
 
+PROPERTY_TYPES = ("int", "float", "str", "bool", "list")
+
+
+def parse_property(variables, check):
+    """({name: type}, check as text) for a property such as ('x: list, n: int', 'len(chunk(x, n)) <= len(x)'): the variables are declared, and the check
+    is a safe comparison or and/or of comparisons that calls something. None otherwise."""
+    pairs = [v.split(":") for v in str(variables).split(",")]
+    declared = {p[0].strip(): p[1].strip() for p in pairs if len(p) == 2}
+    try:
+        tree = ast.parse(str(check).strip(), mode="eval")
+    except (SyntaxError, ValueError, RecursionError):
+        return None
+    if len(declared) != len(pairs) or not all(k.isidentifier() and not k.startswith("_") and t in PROPERTY_TYPES for k, t in declared.items()) or not _safe(tree):
+        return None
+    if not isinstance(tree.body, (ast.Compare, ast.BoolOp)) or not any(isinstance(n, ast.Call) for n in ast.walk(tree)) or _needs([ast.unparse(tree)])[1] - set(declared):
+        return None
+    return declared, ast.unparse(tree)
+
+
 def join_examples(examples, limit=200):
     """Examples joined with '; ', keeping whole examples only so that the text still parses after being cut to `limit` characters."""
     out = ""
@@ -155,11 +174,31 @@ def _needs(lines):
     return calls, {n.id for n in nodes if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)} - have - calls
 
 
+CLI = '''import pathlib
+import shutil
+import subprocess
+import sys
+import tempfile
+
+
+def cli(script, *args, files=None):
+    """(exit code, stdout) of `python script args`, run in a copy of the project with the given files added."""
+    with tempfile.TemporaryDirectory() as tmp:
+        shutil.copytree(".", tmp, dirs_exist_ok=True, ignore=shutil.ignore_patterns(".*", "__pycache__"))
+        for name, text in (files or {}).items():
+            pathlib.Path(tmp, name).write_text(text)
+        done = subprocess.run([sys.executable, script, *args], cwd=tmp, capture_output=True, text=True, timeout=10)
+    return done.returncode, done.stdout
+'''
+
+
 def render_test(module, examples):
-    """The text of a pytest file for these (already parsed) examples."""
+    """The text of a pytest file for these (already parsed) examples. An example may run the project as a program with `cli('tool.py', 'arg')`."""
     bodies = [_lines(ex) for ex in examples]
-    names = sorted(set().union(*(_needs(b)[0] for b in bodies)))
-    lines = (["import pytest"] if any("pytest.raises" in l for b in bodies for l in b) else []) + [f"from {module} import {', '.join(names)}" if names else f"import {module}", "", ""]
+    names = sorted(set().union(*(_needs(b)[0] for b in bodies)) - {"cli"})
+    runs = any("cli(" in l for b in bodies for l in b)
+    lines = ["import pytest"] * any("pytest.raises" in l for b in bodies for l in b) + [f"from {module} import {', '.join(names)}"] * bool(names) + [f"import {module}"] * (not names and not runs)
+    lines += [CLI.rstrip("\n")] * runs + ["", ""]
     for i, body in enumerate(bodies, 1):
         lines += [f"def test_spec_{i}():", *(f"    {l}" for l in body), "", ""]
     return "\n".join(lines).rstrip("\n") + "\n"

@@ -24,7 +24,7 @@ for the author (a few lines of plain Python comparisons, not a test suite) and i
 | Tier | Source of truth | On failure |
 |---|---|---|
 | **A. Enforced** | The author's examples, plus checks that need no expected value (syntax, undefined names, no hang, signature matches) | The step is rejected. |
-| **B. Enforced if consistent** | Properties and metamorphic checks the model proposes | Counted only if they hold on every example. A check that contradicts an example is dropped. |
+| **B. Checked, reported** | Properties the model proposes (statements true for every input) | A property that fails on random inputs is a finding with the failing values: the code or the property is wrong, and the author decides. It never blocks a step. |
 | **C. Reported** | An edge-input sweep: the harness runs the code on generated inputs and records what happens | A finding for the author, never a rejection. |
 
 A flaw is then a finding with evidence ("`chunk([1, 2], 0)` raises `ZeroDivisionError`; the spec is silent"), not a failing test the model made up.
@@ -71,6 +71,7 @@ Any sentence of the goal may carry examples. The harness finds them, so the auth
 | An error | `chunk([1], 0) raises ValueError` |
 | Steps in a row, for a class | `c = Counter(5) then c.add(2) then c.value() == 7` |
 | A library object | `from PIL import Image then to_gray(Image.new('L', (1, 1))).mode == 'L'` |
+| A program | `cli('wc.py', 'data.txt', files={'data.txt': 'a b c'})[1].strip() == '3'` (exit code, output) |
 
 - Separate examples with commas, `and`, `;` or sentence ends. Brackets and quotes may contain commas.
 - A comparison needs a plain value on one side. An example must end in a check and contain a call.
@@ -107,7 +108,7 @@ The harness owns the environment profile; the model only writes the test.
 |---|---|---|
 | 1 | Items 1 to 3: examples in the goal become tests (commas, sentences); a static check for undefined names in every file the model writes; a time limit for each test | 2 runs each of P1, P2, P3, P8, P9 and the niche prompts P4 to P7 |
 | 2 | Items 4 and 5: the edge-input sweep reported as findings; coverage and mutation as the feedback loop | Same set, 2 runs each |
-| 3 | Items 6 and 7: `hypothesis` properties filtered by consistency with the examples; end to end for CLIs | Same set, 2 runs each |
+| 3 | Items 6 and 7: properties the model proposes, run on random inputs by the harness (no `hypothesis` package needed); end to end for command line programs (an example may call `cli('tool.py', 'arg', files={...})`) | Same set plus P10 (a command line program), 2 runs each |
 
 A run counts as solved when the independent `check.py` in the prompt file passes, not when the harness says verified.
 

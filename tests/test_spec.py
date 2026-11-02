@@ -4,7 +4,7 @@ import sys
 import pytest
 
 from agent.ledger import Ledger
-from agent.spec import MAX_EXAMPLES, ensure_spec_test, join_examples, module_of, parse_examples, propose_examples, render_test, spec_test_path
+from agent.spec import MAX_EXAMPLES, ensure_spec_test, join_examples, module_of, parse_examples, parse_property, propose_examples, render_test, spec_test_path
 
 
 @pytest.mark.parametrize("text,expected", [
@@ -174,3 +174,26 @@ def test_a_model_that_gives_nothing_or_fails_yields_no_examples():
     assert propose_examples(Proposer([]), "x") == []
     assert propose_examples(Proposer(["f(1) == 1"], {"error": "guardrail", "message": "blocked", "calls": []}), "x") == ["f(1) == 1"]   # what it gave before failing is usable
     assert propose_examples(Proposer(["nonsense", "more nonsense"]), "x") == []
+
+
+@pytest.mark.parametrize("variables,check,expected", [
+    ("x: list, n: int", "len(chunk(x, n)) <= len(x)", ({"x": "list", "n": "int"}, "len(chunk(x, n)) <= len(x)")),
+    ("x: list", "unique(unique(x))==unique(x)", ({"x": "list"}, "unique(unique(x)) == unique(x)")),
+    ("x: int", "f(x) >= 0 and f(-x) >= 0", ({"x": "int"}, "f(x) >= 0 and f(-x) >= 0")),
+    ("x: list", "len(y) > 0", None),                      # y is declared nowhere
+    ("x: set", "f(x) == 1", None), ("", "f(1) == 1", None), ("x int", "f(x) == 1", None), ("x: int, x: int", "f(x) == 1", None),
+    ("x: int", "f(x)", None), ("x: int", "1 < 2", None),   # not a comparison, or nothing is called
+    ("x: int", "open(x) == 1", None), ("x: int", "f(x).__class__ == 1", None), ("x: int", "f(x) ==", None),
+])
+def test_a_property_declares_its_variables_and_checks_with_the_same_safety_rules_as_an_example(variables, check, expected):
+    assert parse_property(variables, check) == expected
+
+
+def test_an_example_can_run_the_project_as_a_program_and_the_test_file_carries_the_helper(tmp_path):
+    (tmp_path / "wc.py").write_text("import sys\n\nif __name__ == '__main__':\n    print(len(open(sys.argv[1]).read().split()))\n")
+    examples = parse_examples("cli('wc.py', 'data.txt', files={'data.txt': 'a b c'})[1].strip() == '3', and cli('wc.py', 'missing.txt')[0] == 1")
+    assert len(examples) == 2
+    (tmp_path / "test_wc_spec.py").write_text(render_test("wc", examples))
+    assert "import wc" not in (tmp_path / "test_wc_spec.py").read_text()
+    done = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider"], cwd=tmp_path, capture_output=True, text=True)
+    assert done.returncode == 0 and "2 passed" in done.stdout

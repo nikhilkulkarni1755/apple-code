@@ -7,7 +7,7 @@ from .evidence import gather
 from .handoff import BUDGET, MAX_CONTINUATIONS, continuation_depth, looked_at, note
 from .ledger import ActionError
 from .memory import Task
-from .probe import findings
+from .probe import findings, propose_properties
 from .research import research_step
 from .spec import ensure_spec_test, join_examples, module_of, parse_examples, propose_examples, py_paths
 from .runner import run_tests
@@ -175,7 +175,8 @@ def work_task(fm, ledger, memory, task, agent="root", web=None, max_iterations=4
         if verdict.ok:
             files = sorted({r["path"] for r in _edits_of_the_task(ledger, agent, task.id)})
             src = module_of(text) if probe else None
-            found = findings(ledger.root, src[1], text, parse_examples(f"{task.done_when};{task.detail}")) if src else []   # what the examples leave open
+            props = propose_properties(fm, f"{text}\n{(ledger.root / src[1]).read_text()[:2000]}") if src else []
+            found = findings(ledger.root, src[1], text, parse_examples(f"{task.done_when};{task.detail}"), props) if src else []   # what the examples leave open
             with ledger.scope(task=task.id, kind="test", iteration=it):
                 for f in found:
                     ledger.log_read("finding", task.id, {"module": src[1]}, f)
