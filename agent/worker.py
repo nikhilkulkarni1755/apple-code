@@ -18,7 +18,7 @@ INSTRUCTIONS = ("You are a coding agent. Do the task by editing files with the t
                 "Use replace_text with the exact existing text, insert_after, or create_file. Never change existing tests. "
                 "After changing code call check_syntax. Call run_tests when you are done, then reply DONE.")
 WRITE_INSTRUCTIONS = ("You write one Python file. Reply with the complete contents of that file and nothing else. "
-                      "A test file uses pytest, imports from the module it tests, and every test asserts an exact expected result.")
+                      "A test file uses pytest, imports from the module it tests, and has plain test functions (no classes, no self) that each assert an exact expected result.")
 MAX_FILES = 3   # files one whole-file attempt writes: a session each
 _CODE = re.compile(r"```[^\n]*\n(.*?)```", re.S)
 TOOLS = ("read_file", "list_files", "grep", "create_file", "replace_text", "insert_after", "run_tests", "check_syntax")
@@ -60,9 +60,10 @@ def work_task(fm, ledger, memory, task, agent="root", web=None, max_iterations=4
     roots = {p.split("/")[0].removesuffix(".py") for p in start_files if p.endswith(".py") and not is_test_path(p)}
     names = TOOLS + (("delete_file",) if any(w in text.lower() for w in ("delete", "remove")) else ()) + (("web_search", "fetch_url") if web else ())
     tools = [t for t in make_tools(ledger, web) if t.name in names]
-    paths = [p for p in py_paths(text) if p not in originals and p != spec_path][:MAX_FILES]   # source files first, then their tests
+    goal = memory.get("Goals")
+    paths = [p for p in py_paths(text) if p in goal and p not in originals and p != spec_path][:MAX_FILES]   # files the goal names (the planner's own names are often wrong), source first, then tests
     paths.sort(key=is_test_path)
-    whole = whole and bool(paths) and "delete_file" not in names and all(len(start_files.get(p, "").splitlines()) <= 60 for p in paths)   # small files only: the model gets each one whole
+    whole = whole and bool(paths) and all(len(start_files.get(p, "").splitlines()) <= 60 for p in paths)   # small files only: the model gets each one whole
     create = next(t.handler for t in tools if t.name == "create_file")
     instructions = WRITE_INSTRUCTIONS if whole else INSTRUCTIONS
 
