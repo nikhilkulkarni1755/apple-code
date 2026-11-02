@@ -778,7 +778,7 @@ SLUG_TESTS = "from slugs import slugify\n\n\ndef test_slugify():\n    assert slu
 def fresh(tmp_path):
     L = Ledger(tmp_path)
     m = Memory(L)
-    m.add_plan("Slugs", [Task("Create slugs.py", "Also write tests in tests/test_slugs.py", "pytest tests/test_slugs.py passes", kind="code")])
+    m.add_plan("Create slugs.py with slugify and tests/test_slugs.py", [Task("Create slugs.py", "Also write tests in tests/test_slugs.py", "pytest tests/test_slugs.py passes", kind="code")])
     return tmp_path, L, m, m.tasks()[0]
 
 
@@ -797,3 +797,11 @@ def test_whole_file_mode_rewrites_the_files_after_a_failure_and_ignores_an_uncha
     out = work_task(fm, L, m, task, whole=True)
     assert out["ok"] and out["summary"].startswith("verified after 2 attempt(s)") and "hello-world" in fm.prompts[2]
     assert fm.temperatures == [None, None, 0.8, 0.8]
+
+
+def test_whole_file_mode_writes_only_files_the_goal_names(fresh):
+    root, L, m, task = fresh
+    task.title, task.detail = "Create slug_slugs.py", "Write slugs.py. Also write tests in tests/test_slugs.py"
+    fm = FakeFM([reply(SLUG), reply(SLUG_TESTS)])
+    work_task(fm, L, m, task, whole=True, max_iterations=1)
+    assert not (root / "slug_slugs.py").exists() and (root / "slugs.py").exists()
