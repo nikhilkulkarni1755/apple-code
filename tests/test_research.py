@@ -422,3 +422,12 @@ def test_a_test_only_step_for_a_module_that_already_has_a_code_step_is_dropped(e
     script = lambda t: [t["add_actionable"](title="Update tests/test_slugs.py", kind="test"), t["add_actionable"](title="Write tests in tests/test_words.py", kind="test")]
     r = research(FakeFM(script), L, m, "1")
     assert r["added"] == 1 and m.tasks()[0].children[-1].title == "Write tests in tests/test_words.py"
+
+
+def test_a_file_the_goal_names_that_no_step_names_gets_a_step_in_the_goals_order(tmp_path):
+    L = Ledger(tmp_path)
+    m = Memory(L)
+    m.add_plan("g", [Task("Plan", "Write tokenize in tokens.py, then tests in tests/test_tokens.py. Then evaluate in calc.py and tests/test_calc.py.", kind="research")])
+    research(FakeFM(lambda t: t["add_actionable"](title="Create calc.py", detail="evaluate")), L, m, "1")
+    kids = m.tasks()[0].children
+    assert [k.title for k in kids] == ["Create tokens.py", "Create calc.py"]
