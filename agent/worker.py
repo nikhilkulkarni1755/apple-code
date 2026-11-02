@@ -92,6 +92,8 @@ def work_task(fm, ledger, memory, task, agent="root", web=None, max_iterations=4
             head.append(f"The tests are already written in {spec_path}. Write only the code that makes them pass, and do not edit that file.")
         if path:
             head.append(f"Reply with the complete contents of {path}.")
+            if it > 1:
+                head.append("A failing test can be the wrong one: the task and its Spec are the truth. Make the files agree with them, and drop any assertion the task does not state.")
         if earlier:
             head.append("Handoff from the agent before you:\n" + earlier)
         if tight:
