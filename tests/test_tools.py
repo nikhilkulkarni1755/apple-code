@@ -79,3 +79,14 @@ def test_run_tests_forgives_a_leading_pytest_and_a_test_file_without_its_folder(
     (root / "tests" / "test_a.py").write_text("def test_a():\n    assert True\n")
     for args in ("pytest tests/test_a.py", "python -m pytest test_a.py", "test_a.py -v", ""):
         assert "1 passed" in t["run_tests"](args=args), args
+
+
+def test_check_syntax_reports_errors_with_their_line_and_logs_the_check(env):
+    root, L, t = env
+    (root / "bad.py").write_text("def f(:\n    return 1\n")
+    (root / "good.py").write_text("x = 1\n")
+    assert t["check_syntax"](path="good.py").startswith("ok") and "bad.py:1:" in t["check_syntax"](path="bad.py") and "`def f(:`" in t["check_syntax"](path="bad.py")
+    assert "bad.py:1:" in t["check_syntax"]() and "good.py" not in t["check_syntax"]()
+    assert [r["element"] for r in L.list() if r["action"] == "check_syntax"][:2] == ["good.py", "bad.py"]
+    with pytest.raises(Exception):
+        t["check_syntax"](path="../outside.py")

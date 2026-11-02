@@ -144,7 +144,7 @@ def test_deleting_an_existing_test_file_is_undone(env):
 def test_the_delete_tool_is_offered_only_when_the_task_talks_about_deleting_or_removing(env):
     root, L, m, task = env
     fm, _ = work(env, [idle], max_iterations=1)
-    assert "delete_file" not in fm.tool_names[0] and fm.tool_names[0] == ["read_file", "list_files", "grep", "create_file", "replace_text", "insert_after", "run_tests"]
+    assert "delete_file" not in fm.tool_names[0] and fm.tool_names[0] == ["read_file", "list_files", "grep", "create_file", "replace_text", "insert_after", "run_tests", "check_syntax"]
     fm2 = FakeFM([idle])
     work_task(fm2, L, m, Task("Remove the old helper", "", kind="code", id="9"), max_iterations=1)
     assert "delete_file" in fm2.tool_names[0]

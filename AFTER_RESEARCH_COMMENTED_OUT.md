@@ -145,3 +145,6 @@ Observations:
 4. **A hung test costs the run its time:** the default test timeout is 300 s of a 780 s run.
 
 Next edits I would make, in order: (1) after the model plans, add a step for every `.py` file the goal names that no step names (`Create words.py` + the goal's sentence as its spec); (2) cut a file's content at a closing ``` line; (3) lower the test timeout from 300 s to 120 s.
+
+## Tool: `check_syntax`
+The worker is offered a `check_syntax(path)` tool (empty path = every Python file) that returns `ok` or each syntax error with its line text, and its instructions say to call it after changing code. Until now a syntax error was only found by the harness after the session ended, which cost a whole attempt (12 of 19 rejections in P3 round 2). The call is logged in the ledger like the other reads. Whether the model uses it, and how often, is part of the next experiment.
