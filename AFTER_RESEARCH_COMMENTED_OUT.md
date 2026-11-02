@@ -162,3 +162,16 @@ One run per prompt, 12 attempts per step, no new session after 3600 s.
 - The model calls `check_syntax` often (37, 97 and 12 calls), but the failures were logic and import mistakes, not syntax errors.
 - More attempts did not solve any prompt. The failures repeat the earlier families: a wrong import, a signature mismatch and slow sessions.
 - Session ends in P2: 38 ok, 15 call cap, 7 budget wind-down, 3 hard `context_overflow`.
+
+## Whole-file mode (PRs #23, #24, #25): three rounds of P1-P3
+
+The model replies with a whole file per session (source first, then tests written from the real code); the harness writes it. 4 attempts per step, 1800 s cap.
+
+| Round | P1 | P2 | P3 | Fix made after it |
+|---|---|---|---|---|
+| 1 (#23) | solved, 161 s | no: "remove" in the goal switched on `delete_file`, so the tools path ran | no: the planner's wrong file names were written; tests used `self` | only files the goal names; no delete switch; plain test functions (#24) |
+| 2 (#24) | solved, 37 s | no: `report.py` written without seeing `Inventory.items` | no: planning dropped every step (no file named) | a step for every goal file no step names; other modules shown (#25) |
+| 3 (#25) | no: the model's test asked for `'hello world how are you'` from `slugify`, against the spec; 4 attempts rewrote both files without agreeing | no: `report.py` and its test disagree (`'dict' object is not callable`, `NameError: Inventory`) | no: the test expected `[-7.2]`, which the spec never asks for; the code returned `['-', 7.2]` | none yet |
+
+- Sessions are fast (a file takes seconds), runs end in 37-255 s, so the time cap is no longer what stops a run.
+- The remaining failures are tests the model invents beyond the spec (negative numbers, a different output format). The code follows the spec, the test does not, and retries rewrite both without telling which side is wrong. This matches PLAN.md section 20: model-written tests are the limit.
