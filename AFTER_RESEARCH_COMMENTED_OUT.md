@@ -175,3 +175,24 @@ The model replies with a whole file per session (source first, then tests writte
 
 - Sessions are fast (a file takes seconds), runs end in 37-255 s, so the time cap is no longer what stops a run.
 - The remaining failures are tests the model invents beyond the spec (negative numbers, a different output format). The code follows the spec, the test does not, and retries rewrite both without telling which side is wrong. This matches PLAN.md section 20: model-written tests are the limit.
+
+## The ladder: specific prompts P1-P3, niche P4-P7, vague twins P8-P9 (after PR #28)
+
+One run each (P1-P3 twice), 4 attempts per step, whole-file mode, retry wording "the task is the truth". None solved the whole prompt (0 of 12), but most files passed on their first attempt.
+
+| Prompt | Files passed (of) | Why the rest were rejected |
+|---|---|---|
+| P1 functions | 3 of 4, 3 of 4 | the model's test asserts `chunk` raises when size < 1 and its code does not (DID NOT RAISE) |
+| P2 chain | 0 of 3, 0 of 3 | no tests collected; a 300 s pytest timeout (an infinite loop in `tokenize`); import errors |
+| P3 classes | 3 of 4, 2 of 4 | `Counter.py` written with a capital letter; `TypeError: 'int' object is not callable` in the model's test; a test used `Stack.items`, which the code lacks |
+| P4 vision | 0 of 3 | the test file forgot `from PIL import Image` (`NameError: Image`); a test took an `image` fixture |
+| P5 ml | 1 of 3 | `min_max` returned a list (no `.tolist()`); a wrong expectation from `predict` |
+| P6 healthcare | 1 of 3 | import error when collecting the test file |
+| P7 rendering | 1 of 3 | `bar_chart` not imported in its test; "no new test passes" |
+| P8 vague functions | 2 of 4 | "no new test passes (10 passed before and 2 now)": the judge compares counts across different test files |
+| P9 vague classes | 1 of 4 | import errors when collecting |
+
+- Most rejected steps fail in the model's own test file (a missing import, a made-up fixture, an assertion the goal never states), not in the implementation. Code files passed on attempt 1 in most runs.
+- The goals now contain exact examples (`total(2, 3) == 5`), which `agent/spec.py` could turn into the tests. Today `parse_examples` splits on `;` and newlines, so a sentence of comma-separated examples yields none.
+- The one 300 s timeout was a real infinite loop, so a finite test timeout is still needed.
+- Suspect: the "no new test passes" check compares the pass count of all tests before and after, so a step that rewrites its test file with fewer tests is rejected.
