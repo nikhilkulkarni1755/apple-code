@@ -1,7 +1,9 @@
 """The PROMPT1 problem, verbatim, with the wind-down threshold set to THRESHOLD tokens. For every model session it records the exact
 tokens of the starting context (tools, instructions, prompt), the tokens of the code the model wrote, and the tokens the session used;
 it also records when a new agent was needed (a session wound down, a continuation task queued).
-Run from the repo root:  .venv/bin/python -m experiments.measure_budget THRESHOLD OUT.json CHECK.py [PROMPT1.md]"""
+Run from the repo root:  .venv/bin/python -m experiments.measure_budget THRESHOLD OUT.json CHECK.py [PROMPT1.md [ATTEMPTS [SECONDS]]]
+(ATTEMPTS: tries per step, default 4; SECONDS: no new model session starts after this, default 780.)"""
+import functools
 import json
 import re
 import shutil
@@ -25,7 +27,9 @@ THRESHOLD, OUT, CHECK = int(sys.argv[1]), Path(sys.argv[2]), Path(sys.argv[3])
 GOAL = re.search(r'apple-code solve "(.*)"', Path(sys.argv[4] if len(sys.argv) > 4 else "PROMPT1.md").read_text()).group(1)
 for module in (agent.handoff, agent.planner, agent.research, agent.worker):
     module.BUDGET = THRESHOLD   # each of them copied the constant when it was imported
-DEADLINE = 780   # seconds: no new session starts after this, so the helper is still alive when the results are saved
+DEADLINE = int(sys.argv[6]) if len(sys.argv) > 6 else 780   # seconds: no new session starts after this, so the helper is still alive when the results are saved
+if len(sys.argv) > 5:
+    agent.worker.work_task = functools.partial(agent.worker.work_task, max_iterations=int(sys.argv[5]))   # solve_step looks work_task up here when it runs
 WRITES = {"create_file": "content", "replace_text": "new", "insert_after": "text"}
 
 
