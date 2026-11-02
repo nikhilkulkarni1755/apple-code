@@ -61,12 +61,19 @@ def join_examples(examples, limit=200):
     return out
 
 
+def py_paths(text):
+    """The project .py files named in `text` (no absolute or parent paths, every part an identifier), each once, in order."""
+    out = []
+    for path in re.findall(r"[\w./-]+\.py(?!\w)", text or ""):
+        if not path.startswith(("/", ".")) and ".." not in path and all(p.isidentifier() for p in path.removesuffix(".py").split("/")):
+            out.append(path)
+    return list(dict.fromkeys(out))
+
+
 def module_of(text):
     """(dotted module, path) of the first project source file named in `text`, e.g. ('score', 'score.py'); None if there is none."""
-    for path in re.findall(r"[\w./-]+\.py(?!\w)", text or ""):
+    for path in py_paths(text):
         parts = path.removesuffix(".py").split("/")
-        if path.startswith(("/", ".")) or ".." in path or not all(p.isidentifier() for p in parts):
-            continue
         if parts[-1].startswith("test_") or parts[-1].endswith("_test") or parts[-1] == "conftest":
             continue
         return ".".join(parts), path

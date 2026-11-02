@@ -1,13 +1,14 @@
 """The worker loop. One fresh model session per attempt; between attempts the only thing carried over is a short failure summary.
 The harness runs the tests and judges the evidence (agent/verify.py), so the model cannot declare itself done."""
 import json
+import re
 
 from .evidence import gather
 from .handoff import BUDGET, MAX_CONTINUATIONS, continuation_depth, looked_at, note
 from .ledger import ActionError
 from .memory import Task
 from .research import research_step
-from .spec import ensure_spec_test, join_examples, module_of, propose_examples
+from .spec import ensure_spec_test, join_examples, module_of, propose_examples, py_paths
 from .runner import run_tests
 from .tools import make_tools, visible_files
 from .verify import (acceptance_args, failure_summary, frozen_check, import_hint, is_test_path, judge, protected_violations, red_check, syntax_errors,
@@ -16,6 +17,10 @@ from .verify import (acceptance_args, failure_summary, frozen_check, import_hint
 INSTRUCTIONS = ("You are a coding agent. Do the task by editing files with the tools. Write or extend a test that proves it works. "
                 "Use replace_text with the exact existing text, insert_after, or create_file. Never change existing tests. "
                 "After changing code call check_syntax. Call run_tests when you are done, then reply DONE.")
+WRITE_INSTRUCTIONS = ("You write one Python file. Reply with the complete contents of that file and nothing else. "
+                      "A test file uses pytest, imports from the module it tests, and every test asserts an exact expected result.")
+MAX_FILES = 3   # files one whole-file attempt writes: a session each
+_CODE = re.compile(r"```[^\n]*\n(.*?)```", re.S)
 TOOLS = ("read_file", "list_files", "grep", "create_file", "replace_text", "insert_after", "run_tests", "check_syntax")
 RETRY_TEMPERATURE = 0.8   # a retry with the same prompt and the default sampling often gives the same wrong answer: vary it from the second attempt on
 RETRY_FACTS = 3000   # characters of project facts in a retry prompt (1,800 on the first): room for the whole file a syntax error or traceback names
@@ -27,7 +32,7 @@ def _edits_of_the_task(ledger, agent, task_id, iteration=None):
             if not r["path"].endswith("MEMORY.md") and r["iteration"] != 0]   # bookkeeping and the harness's own spec tests are not the model's work
 
 
-def work_task(fm, ledger, memory, task, agent="root", web=None, max_iterations=4, max_tool_calls=12, say=None, propose=False):
+def work_task(fm, ledger, memory, task, agent="root", web=None, max_iterations=4, max_tool_calls=12, say=None, propose=False, whole=False):
     """Carry out one code task. Returns {'ok', 'summary', 'evidence'}; on failure the task's edits are rolled back (redo restores them)."""
     say = say or (lambda text: None)
     ledger.sync_external()                           # files you changed by hand since the last record are noted, not refused
@@ -55,6 +60,11 @@ def work_task(fm, ledger, memory, task, agent="root", web=None, max_iterations=4
     roots = {p.split("/")[0].removesuffix(".py") for p in start_files if p.endswith(".py") and not is_test_path(p)}
     names = TOOLS + (("delete_file",) if any(w in text.lower() for w in ("delete", "remove")) else ()) + (("web_search", "fetch_url") if web else ())
     tools = [t for t in make_tools(ledger, web) if t.name in names]
+    paths = [p for p in py_paths(text) if p not in originals and p != spec_path][:MAX_FILES]   # source files first, then their tests
+    paths.sort(key=is_test_path)
+    whole = whole and bool(paths) and "delete_file" not in names and all(len(start_files.get(p, "").splitlines()) <= 60 for p in paths)   # small files only: the model gets each one whole
+    create = next(t.handler for t in tools if t.name == "create_file")
+    instructions = WRITE_INSTRUCTIONS if whole else INSTRUCTIONS
 
     facts = gather(ledger, text)                     # what is in the project, found by the harness: no model tokens spent reading files
     with ledger.scope(task=task.id, kind="code"):
@@ -74,19 +84,21 @@ def work_task(fm, ledger, memory, task, agent="root", web=None, max_iterations=4
 
     earlier = memory.handoff(task.id)                # a note left by an agent that ran out of room on this task or its parent
 
-    def prompt_for(failure, lean, it, tight=False):
+    def prompt_for(failure, lean, it, tight=False, path=None):
         head = [f"Task {task.id}: {task.title}", task.detail, f"Done when: {('pytest ' + args).strip()} passes with at least one test"]
         if spec_path:
             head.append(f"The tests are already written in {spec_path}. Write only the code that makes them pass, and do not edit that file.")
+        if path:
+            head.append(f"Reply with the complete contents of {path}.")
         if earlier:
             head.append("Handoff from the agent before you:\n" + earlier)
         if tight:
             head.append("The last session ran out of room. Do ONE small piece, call run_tests, and stop.")
-        extra = [] if lean else [facts if it == 1 else gather(ledger, f"{text} {failure}", budget=RETRY_FACTS), "Notes:\n" + memory.context(900)]   # a retry sees the files as they are now, and those the failure names
+        extra = [] if lean else [facts if it == 1 and not path else gather(ledger, f"{text} {failure}", budget=RETRY_FACTS), "Notes:\n" + memory.context(900)]   # a retry sees the files as they are now, and those the failure names
         for parts, failed in ((head + extra, failure), (head, failure), (head, failure[:300])):   # full, then without notes, then minimal
             label = "The tests currently fail:" if it == 1 else "Your last attempt failed:"
             prompt = "\n".join(p for p in parts + ([label + "\n" + failed] if failed else []) if p)
-            if _fits(fm, tools, prompt):
+            if _fits(fm, [] if whole else tools, prompt, instructions):
                 break
         return prompt
 
@@ -97,9 +109,19 @@ def work_task(fm, ledger, memory, task, agent="root", web=None, max_iterations=4
     last, stalls, lean, budget_hit = ["nothing was attempted"], 0, False, False
     for it in range(1, max_iterations + 1):
         with ledger.scope(task=task.id, kind="code", iteration=it):
-            r = fm.run(prompt_for(failure, lean, it, budget_hit), tools, INSTRUCTIONS, max_tool_calls=max_tool_calls,
-                       temperature=RETRY_TEMPERATURE if it > 1 else None, budget_tokens=BUDGET)
-            ledger.log_session(r)
+            temperature = RETRY_TEMPERATURE if it > 1 else None
+            for path in (paths if whole else [None]):   # whole-file mode: one session per file, each reply written by the harness
+                r = fm.run(prompt_for(failure, lean, it, budget_hit, path), [] if whole else tools, instructions, max_tool_calls=max_tool_calls,
+                           temperature=temperature, budget_tokens=BUDGET)
+                ledger.log_session(r)
+                if "error" in r:
+                    break
+                if whole:
+                    fenced = _CODE.search(r["content"])
+                    try:
+                        create(path=path, content=fenced.group(1) if fenced else r["content"])
+                    except ActionError:
+                        pass   # the same file again: nothing changed
         if r.get("reason") == "budget":
             budget_hit = True
             say(f"  attempt {it}: used {r.get('estimated') or r.get('tokens')} of {r.get('context', 8192)} tokens: wound down")
@@ -178,14 +200,14 @@ def _hand_off(ledger, memory, task, agent, originals, problems, failure, say):
     return {"ok": True, "summary": f"handed off: ran out of room ({'work kept' if done else 'work rolled back'}); the rest is queued as a new task"}
 
 
-def _fits(fm, tools, prompt):
+def _fits(fm, tools, prompt, instructions):
     count = getattr(fm, "count", None)
     if count is None:
         return True
-    c = count(tools, INSTRUCTIONS, prompt)
+    c = count(tools, instructions, prompt)
     return c["tools"] + c["instructions"] + c["prompt"] + RESERVE <= c.get("context", 8192)
 
 
-def solve_step(fm, web=None, say=None):
+def solve_step(fm, web=None, say=None, whole=True):
     """The step for agents.task_runner: research tasks are researched, code tasks are worked and verified."""
-    return research_step(fm, web, worker=lambda ctx, task: work_task(fm, ctx.ledger, ctx.memory, task, agent=ctx.id, web=web, say=say))
+    return research_step(fm, web, worker=lambda ctx, task: work_task(fm, ctx.ledger, ctx.memory, task, agent=ctx.id, web=web, say=say, whole=whole))
