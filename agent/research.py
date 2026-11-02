@@ -8,7 +8,7 @@ from .ledger import ActionError
 from .memory import Task
 from .evidence import gather
 from .handoff import BUDGET
-from .spec import join_examples, parse_examples
+from .spec import join_examples, parse_examples, py_paths
 from .tools import _p, make_tools, visible_files
 from .verify import is_test_path
 
@@ -114,6 +114,14 @@ def research(fm, ledger, memory, task_id, web=None, spawn=None, max_tool_calls=8
                     kept[kept.index(mate)] = code
                     continue
                 kept.append(t)
+        have = {m for c in [*_walk(memory.tasks()), *kept] if c.kind != "research" for m in _modules(c)}
+        before = len(kept)
+        for p in py_paths(task.detail):   # a file the goal names that no step is about gets a step: the model often names none, or only some
+            if not is_test_path(p) and p not in files and Path(p).stem not in have:
+                kept.append(Task(f"Create {p}", kind="code"))
+                have.add(Path(p).stem)
+        if len(kept) > before:   # in the order the goal names them
+            kept.sort(key=lambda t: min((task.detail.find(f) for f in _work(t)[1] if f in task.detail), default=len(task.detail)))
         kept = kept[:max(0, MAX_STEPS - len(task.children))]
         for t in kept:
             if spec := _spec(task.detail, t):

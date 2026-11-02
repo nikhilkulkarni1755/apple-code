@@ -58,6 +58,7 @@ def work_task(fm, ledger, memory, task, agent="root", web=None, max_iterations=4
     written = ledger.written_by_tasks()
     originals = {p: t for p, t in start_files.items() if is_test_path(p) and p not in written}   # tests an earlier task wrote may be extended
     roots = {p.split("/")[0].removesuffix(".py") for p in start_files if p.endswith(".py") and not is_test_path(p)}
+    known = " ".join(p for p in start_files if p.endswith(".py") and not is_test_path(p))   # whole-file mode shows the other modules, so a file is written against the code it uses
     names = TOOLS + (("delete_file",) if any(w in text.lower() for w in ("delete", "remove")) else ()) + (("web_search", "fetch_url") if web else ())
     tools = [t for t in make_tools(ledger, web) if t.name in names]
     goal = memory.get("Goals")
@@ -95,7 +96,7 @@ def work_task(fm, ledger, memory, task, agent="root", web=None, max_iterations=4
             head.append("Handoff from the agent before you:\n" + earlier)
         if tight:
             head.append("The last session ran out of room. Do ONE small piece, call run_tests, and stop.")
-        extra = [] if lean else [facts if it == 1 and not path else gather(ledger, f"{text} {failure}", budget=RETRY_FACTS), "Notes:\n" + memory.context(900)]   # a retry sees the files as they are now, and those the failure names
+        extra = [] if lean else [facts if it == 1 and not path else gather(ledger, f"{text} {failure} {known if path else ''}", budget=RETRY_FACTS), "Notes:\n" + memory.context(900)]   # a retry sees the files as they are now, and those the failure names
         for parts, failed in ((head + extra, failure), (head, failure), (head, failure[:300])):   # full, then without notes, then minimal
             label = "The tests currently fail:" if it == 1 else "Your last attempt failed:"
             prompt = "\n".join(p for p in parts + ([label + "\n" + failed] if failed else []) if p)
