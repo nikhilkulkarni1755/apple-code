@@ -8,6 +8,7 @@ from contextlib import contextmanager
 from .fm import Tool
 from .ledger import ActionError, diff_action
 from .runner import run_tests
+from .verify import syntax_errors
 
 
 def _p(name, type_, description, optional=False):
@@ -175,6 +176,10 @@ def make_tools(ledger, web=None):
             raise ActionError(f"{rel} already has exactly this content")
         return f"ok (#{ledger.do(*diff_action(rel, old, content))}) replaced the existing {rel}"
 
+    def check_syntax(path=""):
+        paths = [ledger._resolve(_str(path, "path"))[0]] if path else [p for p in visible_files(ledger) if p.endswith(".py")]
+        return logged("check_syntax", path or "*.py", {"path": path}, lambda: "\n".join(syntax_errors(ledger.root, paths)) or "ok: no syntax errors")
+
     def shell(seq):
         r = ledger.get(seq)
         rows = [x for x in ledger.list() if x["cause"] == seq]
@@ -203,6 +208,8 @@ def make_tools(ledger, web=None):
              [_p("cmd", "string", "shell command")], lambda cmd: shell(ledger.run_command(cmd))),
         Tool("run_tests", "Run pytest; returns exit code and output.",
              [_p("args", "string", "pytest arguments, e.g. test_x.py -k name", True)], lambda args="": shell(run_tests(ledger, _test_args(ledger, _str(args, "args"))))),
+        Tool("check_syntax", "Check that a Python file (or every Python file) can be parsed; returns ok, or each error with its line. Run it after changing code.",
+             [_p("path", "string", "file path; leave empty to check all Python files", True)], check_syntax),
     ]
     if web is not None:
         tools += [Tool("web_search", "Search the web; returns titles, URLs and snippets.", [_p("query", "string", "what to look up")],

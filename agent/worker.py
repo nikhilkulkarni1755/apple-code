@@ -15,8 +15,8 @@ from .verify import (acceptance_args, failure_summary, frozen_check, import_hint
 
 INSTRUCTIONS = ("You are a coding agent. Do the task by editing files with the tools. Write or extend a test that proves it works. "
                 "Use replace_text with the exact existing text, insert_after, or create_file. Never change existing tests. "
-                "Call run_tests when you are done, then reply DONE.")
-TOOLS = ("read_file", "list_files", "grep", "create_file", "replace_text", "insert_after", "run_tests")
+                "After changing code call check_syntax. Call run_tests when you are done, then reply DONE.")
+TOOLS = ("read_file", "list_files", "grep", "create_file", "replace_text", "insert_after", "run_tests", "check_syntax")
 RETRY_TEMPERATURE = 0.8   # a retry with the same prompt and the default sampling often gives the same wrong answer: vary it from the second attempt on
 RETRY_FACTS = 3000   # characters of project facts in a retry prompt (1,800 on the first): room for the whole file a syntax error or traceback names
 RESERVE = 2500   # tokens left free for tool results and the answer
