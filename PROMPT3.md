@@ -1,30 +1,51 @@
-mkdir calculator && cd calculator
+mkdir four-classes && cd four-classes
 
-apple-code solve "Build a small arithmetic calculator in two rounds. Each round has three tasks in order: research, write the code, write the tests. Round 1: research how to split an expression into tokens, write tokenize(text) in tokens.py returning a list of numbers (int, or float when there is a decimal point) and the operator or bracket characters + - * / ( ), raising ValueError on any other character, then write tests in tests/test_tokens.py. Round 2: research operator precedence, write evaluate(text) in calc.py using tokenize, with * and / before + and -, left to right, and brackets, raising ZeroDivisionError for division by zero and ValueError for a malformed expression, then write tests in tests/test_calc.py."
+apple-code solve "Write four small Python files with plain Python and no extra packages. File 1 is counter.py with class Counter: Counter(start: int = 0) stores start, add(n: int = 1) -> None adds n to the value, value() -> int returns the value, reset() -> None sets the value back to start, for example c = Counter(5) then c.add(2) then c.value() == 7, then c.reset() then c.value() == 5, and Counter().value() == 0, and its tests are in tests/test_counter.py. File 2 is stack.py with class Stack: push(item) -> None adds item on top, pop() returns and removes the top item, peek() returns the top item without removing it, size() -> int returns the number of items, is_empty() -> bool, and pop and peek raise IndexError when the stack is empty, for example after push(1) and push(2), pop() == 2 and size() == 1, and its tests are in tests/test_stack.py. File 3 is inventory.py with class Inventory: add(name: str, qty: int) -> None adds qty to the count of name, remove(name: str, qty: int) -> None subtracts qty and raises ValueError when the count of name is less than qty, count(name: str) -> int returns the count and is 0 for an unknown name, total() -> int returns the sum of all counts, names() -> list returns all names that were ever added, sorted, for example add('apple', 3) then add('apple', 2) then count('apple') == 5, remove('apple', 9) raises ValueError, count('pear') == 0, and its tests are in tests/test_inventory.py. File 4 is report.py with report(inventory: Inventory) -> list that imports Inventory from inventory.py and returns one string 'name: qty' for each name from inventory.names() whose count is more than 0, sorted by name, for example with apple 5 and fig 0 and pear 4 it returns ['apple: 5', 'pear: 4'], and its tests are in tests/test_report.py."
 
 apple-code test tests
 
 cat > check.py <<'EOF'
-from tokens import tokenize
-from calc import evaluate
+from counter import Counter
+from stack import Stack
+from inventory import Inventory
+from report import report
 
-assert tokenize("2+3*4") == [2, "+", 3, "*", 4]
-assert tokenize("(1 + 2.5)") == ["(", 1, "+", 2.5, ")"]
+c = Counter(5)
+c.add(2)
+assert c.value() == 7
+c.add()
+assert c.value() == 8
+c.reset()
+assert c.value() == 5 and Counter().value() == 0
+
+s = Stack()
+assert s.is_empty() and s.size() == 0
+s.push(1)
+s.push(2)
+assert s.peek() == 2 and s.size() == 2 and s.pop() == 2 and s.size() == 1 and not s.is_empty()
+s.pop()
+for call in (s.pop, s.peek):
+    try:
+        call()
+        raise SystemExit("an empty stack should raise IndexError")
+    except IndexError:
+        pass
+
+i = Inventory()
+assert i.count("apple") == 0 and i.total() == 0 and i.names() == []
+i.add("pear", 4)
+i.add("apple", 3)
+i.add("apple", 2)
+assert i.count("apple") == 5 and i.total() == 9 and i.names() == ["apple", "pear"]
 try:
-    tokenize("2 $ 3")
-    raise SystemExit("tokenize of a bad character should raise ValueError")
+    i.remove("apple", 9)
+    raise SystemExit("remove of too many should raise ValueError")
 except ValueError:
     pass
-assert evaluate("2 + 3 * 4") == 14
-assert evaluate("(2+3)*4") == 20
-assert evaluate("10 / 4") == 2.5
-assert evaluate("2 - 3 - 1") == -2
-for bad, err in (("1/0", ZeroDivisionError), ("2 *", ValueError), ("(1+2", ValueError)):
-    try:
-        evaluate(bad)
-        raise SystemExit(f"evaluate({bad!r}) should raise {err.__name__}")
-    except err:
-        pass
+assert i.count("apple") == 5
+i.add("fig", 1)
+i.remove("fig", 1)
+assert report(i) == ["apple: 5", "pear: 4"]
 print("PROMPT3 independent check: all passed")
 EOF
 
