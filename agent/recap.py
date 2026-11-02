@@ -7,7 +7,7 @@ from collections import Counter
 from .memory import _walk
 
 # how a rejected attempt is described in the recap: (pattern in the verify record's error, label)
-_REASONS = [("Syntax error", "syntax errors"), ("no tests were collected", "no tests found"), ("asserts nothing", "hollow tests (no assertion)"),
+_REASONS = [("Syntax error", "syntax errors"), ("Name error", "names used but not defined"), ("no tests were collected", "no tests found"), ("asserts nothing", "hollow tests (no assertion)"),
             ("does not use any code", "tests that never touch the project's code"), ("also pass on the code as it was", "tests that pass without the change"),
             ("changed existing test code", "existing tests altered"), ("deleted the existing test", "existing tests deleted"),
             ("original tests, unchanged", "broke the original tests"), ("does not mention", "files deleted that the task never named"),

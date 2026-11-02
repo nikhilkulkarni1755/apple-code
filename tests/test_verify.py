@@ -1,6 +1,6 @@
 import pytest
 
-from agent.verify import (acceptance_args, failure_summary, frozen_check, is_test_path, judge, protected_violations, red_check, syntax_errors,
+from agent.verify import (acceptance_args, failure_summary, frozen_check, is_test_path, judge, name_errors, protected_violations, red_check, syntax_errors,
                           unmentioned_deletions, vacuous_tests)
 
 PASS = "....\n4 passed in 0.02s\n"
@@ -297,3 +297,10 @@ def test_an_import_of_a_name_the_module_does_not_define_is_named(tmp_path):
     (tmp_path / "calc.py").write_text("def add(a, b):\n    return a + b\n")
     out = "E   ImportError: cannot import name 'sub' from 'calc' (/x/calc.py)\nE   ImportError: cannot import name 'y' from 'os'"
     assert import_hint(tmp_path, out) == "define `sub` in calc.py"
+
+
+def test_a_name_that_is_used_but_never_defined_or_imported_is_reported_with_its_line(tmp_path):
+    (tmp_path / "t.py").write_text("import os.path\nfrom m import a as b\n\n\ndef test_x(tmp):\n    try:\n        z = [q for q in range(2)]\n    except KeyError as e:\n"
+                                   "        print(e)\n    assert b(os.path) == Image(z, tmp)\n\n\nclass C:\n    d = 1\n")
+    (tmp_path / "star.py").write_text("from m import *\nx = undefined_but_maybe_from_star\n")
+    assert name_errors(tmp_path, ["t.py", "t.py", "star.py", "notes.txt", "missing.py"]) == ["t.py:10: NameError: name 'Image' is not defined"]

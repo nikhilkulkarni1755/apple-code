@@ -11,8 +11,8 @@ from .research import research_step
 from .spec import ensure_spec_test, join_examples, module_of, propose_examples, py_paths
 from .runner import run_tests
 from .tools import make_tools, visible_files
-from .verify import (acceptance_args, failure_summary, frozen_check, import_hint, is_test_path, judge, protected_violations, red_check, syntax_errors,
-                     unmentioned_deletions, vacuous_tests)
+from .verify import (acceptance_args, failure_summary, frozen_check, import_hint, is_test_path, judge, name_errors, protected_violations, red_check,
+                     syntax_errors, unmentioned_deletions, vacuous_tests)
 
 INSTRUCTIONS = ("You are a coding agent. Do the task by editing files with the tools. Write or extend a test that proves it works. "
                 "Use replace_text with the exact existing text, insert_after, or create_file. Never change existing tests. "
@@ -62,9 +62,10 @@ def work_task(fm, ledger, memory, task, agent="root", web=None, max_iterations=4
     names = TOOLS + (("delete_file",) if any(w in text.lower() for w in ("delete", "remove")) else ()) + (("web_search", "fetch_url") if web else ())
     tools = [t for t in make_tools(ledger, web) if t.name in names]
     goal = memory.get("Goals")
-    paths = [p for p in py_paths(text) if p in goal and p not in originals and p != spec_path][:MAX_FILES]   # files the goal names (the planner's own names are often wrong), source first, then tests
+    paths = [p for p in py_paths(text) if p in goal and p not in originals and p != spec_path and not (spec_path and is_test_path(p))][:MAX_FILES]   # files the goal names (the planner's own names are often wrong), source first, then tests; with examples the harness has written the tests
     paths.sort(key=is_test_path)
     whole = whole and bool(paths) and all(len(start_files.get(p, "").splitlines()) <= 60 for p in paths)   # small files only: the model gets each one whole
+    args = "" if whole and spec_path else args   # the harness's tests stand in for the test files the model would have written, which the plan names
     create = next(t.handler for t in tools if t.name == "create_file")
     instructions = WRITE_INSTRUCTIONS if whole else INSTRUCTIONS
 
@@ -140,9 +141,12 @@ def work_task(fm, ledger, memory, task, agent="root", web=None, max_iterations=4
             record(it, False, None, failure)
             last = bad
             continue
-        broken = syntax_errors(ledger.root, [r["path"] for r in rows])
+        broken, label = syntax_errors(ledger.root, [r["path"] for r in rows]), "Syntax error"
+        if not broken:
+            broken, label = name_errors(ledger.root, [r["path"] for r in rows]), "Name error"
         if broken:
-            failure = "Syntax error: " + "; ".join(broken)
+            failure = f"{label}: " + "; ".join(broken)
+            failure += "\nHint: " + hint if (hint := import_hint(ledger.root, failure)) else ""
             record(it, False, None, failure)
             last = broken
             continue

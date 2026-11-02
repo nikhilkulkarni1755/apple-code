@@ -812,3 +812,18 @@ def test_a_whole_file_retry_is_told_the_task_is_the_truth_and_a_test_may_be_wron
     fm = FakeFM([reply(SLUG.replace("'-'", "''")), reply(SLUG_TESTS), reply(SLUG), reply(SLUG_TESTS)])
     work_task(fm, L, m, task, whole=True)
     assert "the task and its Spec are the truth" not in fm.prompts[0] and "the task and its Spec are the truth" in fm.prompts[2]
+
+
+def test_with_examples_in_the_task_the_model_writes_only_the_code_and_the_harness_the_tests(fresh):
+    root, L, m, task = fresh
+    task.detail = "Also write tests in tests/test_slugs.py. Spec: slugify('A B') == 'a-b', and slugify('') == ''."
+    fm = FakeFM([reply(SLUG)])
+    out = work_task(fm, L, m, task, whole=True)
+    assert out["ok"] and len(fm.prompts) == 1 and not (root / "tests").exists() and (root / "test_slugs_spec.py").read_text().count("def test_spec_") == 2
+
+
+def test_a_name_the_model_forgot_to_import_is_named_before_any_test_runs(fresh):
+    root, L, m, task = fresh
+    fm = FakeFM([reply(SLUG), reply("def test_slugify():\n    assert slugify('Hello World') == 'hello-world'\n"), reply(SLUG), reply(SLUG_TESTS)])
+    out = work_task(fm, L, m, task, whole=True)
+    assert out["ok"] and "Name error: tests/test_slugs.py:2: NameError: name 'slugify' is not defined" in fm.prompts[2] and "from slugs import slugify" in fm.prompts[2]

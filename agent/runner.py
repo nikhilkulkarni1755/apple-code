@@ -6,6 +6,7 @@ import signal
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 _RM = (r"\brm\b(?:\s+-\S+)*?\s+(?:-\w*[rR]\w*|--recursive)\b[^;&|]*?\s(?:--\s+)?[\"']?"
        r"(?:/|~|\$HOME|\$\{HOME\}|\.\.|\.)/?\*?[\"']?(?:\s|$|[;&|])")
@@ -82,5 +83,5 @@ def test_python(root):
 
 
 def run_tests(ledger, args="", timeout=300):
-    """Run pytest with the workspace's venv python if it has one. Returns the ledger seq of the run."""
-    return ledger.run_command(f"{shlex.quote(test_python(ledger.root))} -m pytest -q {args}", timeout)
+    """Run pytest (each test limited to 20 s, see pytest_limit.py) with the workspace's venv python if it has one. Returns the ledger seq of the run."""
+    return ledger.run_command(f"{shlex.quote(test_python(ledger.root))} {shlex.quote(str(Path(__file__).with_name('pytest_limit.py')))} -q {args}", timeout)

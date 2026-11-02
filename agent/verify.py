@@ -1,6 +1,7 @@
 """The harness decides whether a task is done: it runs the tests itself and checks the evidence.
 The model's claim that it finished counts for nothing."""
 import ast
+import builtins
 import re
 import shlex
 import shutil
@@ -136,6 +137,31 @@ def syntax_errors(root, paths):
                 out.append(f"{p}:{e.lineno}: {e.msg}" + (f" in `{e.text.strip()[:80]}`" if e.text and e.text.strip() else ""))   # the model sees the line, not only its number
             except (UnicodeDecodeError, ValueError) as e:
                 out.append(f"{p}: cannot be read as Python ({e})")
+    return out
+
+
+def name_errors(root, paths):
+    """Names a Python file uses but never defines or imports. Python reports them only when a test reaches the line, one run at a time."""
+    out = []
+    for p in dict.fromkeys(paths):
+        try:
+            nodes = list(ast.walk(ast.parse((root / p).read_text())))
+        except (OSError, SyntaxError, UnicodeDecodeError, ValueError):
+            continue   # unreadable files are the syntax check's business
+        if not p.endswith(".py") or any(isinstance(n, ast.ImportFrom) and n.names[0].name == "*" for n in nodes):   # a star import can bring any name
+            continue
+        bound = {*dir(builtins), "__file__", "__name__"}
+        for n in nodes:   # a name bound anywhere in the file counts as defined: some mistakes are missed, none invented
+            if isinstance(n, (ast.Import, ast.ImportFrom)):
+                bound.update((a.asname or a.name).split(".")[0] for a in n.names)
+            elif isinstance(n, ast.Name) and not isinstance(n.ctx, ast.Load):
+                bound.add(n.id)
+            elif isinstance(n, (ast.Global, ast.Nonlocal)):
+                bound.update(n.names)
+            else:   # def, class, parameter, except ... as, match captures
+                bound.update(v for v in (getattr(n, "name", None), getattr(n, "arg", None), getattr(n, "rest", None)) if isinstance(v, str))
+        used = {n.id: n.lineno for n in nodes if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load) and n.id not in bound}
+        out += [f"{p}:{line}: NameError: name '{name}' is not defined" for name, line in used.items()]
     return out
 
 

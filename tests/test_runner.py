@@ -125,3 +125,12 @@ def test_add_test_run_undo_rerun_workflow(ws):
     assert "test_new" in L.diff(first, second)
     assert L.diff(first, third).splitlines()[:2] == ["exit code: 0 -> 0", "pytest: {'passed': 1} -> {'passed': 1}"]
     assert L.verify() == []
+
+
+def test_a_test_stuck_in_a_loop_fails_at_its_time_limit_and_the_other_tests_still_run(ws):
+    root, L = ws
+    (root / "test_loop.py").write_text("def test_ok():\n    assert 1\n\n\ndef test_stuck():\n    while True:\n        try:\n            pass\n        except Exception:\n            pass\n")
+    start = time.time()
+    seq = run_tests(L, "--test-limit 1")
+    out = L.output(seq)
+    assert time.time() - start < 30 and "1 failed, 1 passed" in out and "probably an infinite loop" in out
