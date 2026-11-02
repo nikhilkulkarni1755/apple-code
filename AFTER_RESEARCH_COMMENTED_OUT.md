@@ -148,3 +148,17 @@ Next edits I would make, in order: (1) after the model plans, add a step for eve
 
 ## Tool: `check_syntax`
 The worker is offered a `check_syntax(path)` tool (empty path = every Python file) that returns `ok` or each syntax error with its line text, and its instructions say to call it after changing code. Until now a syntax error was only found by the harness after the session ended, which cost a whole attempt (12 of 19 rejections in P3 round 2). The call is logged in the ledger like the other reads. Whether the model uses it, and how often, is part of the next experiment.
+
+## Twelve attempts per step (with `check_syntax`)
+
+One run per prompt, 12 attempts per step, no new session after 3600 s.
+
+| Prompt | Solved | Time | Result |
+|---|---|---|---|
+| P1 | no | 1595 s | `slugs.py` passed only after 12 failed attempts plus a continuation that passed on its 8th; `words.py` blocked after 5 attempts, so it is missing |
+| P2 | no | 3333 s | `inventory.py` and `report.py` both written; the check fails with a circular import (`report.py` imports from `report`) |
+| P3 | no | 4188 s (cap hit) | only `tokens.py` written; `tokenize` missing from it; step 1.1 was still running at the cap |
+
+- The model calls `check_syntax` often (37, 97 and 12 calls), but the failures were logic and import mistakes, not syntax errors.
+- More attempts did not solve any prompt. The failures repeat the earlier families: a wrong import, a signature mismatch and slow sessions.
+- Session ends in P2: 38 ok, 15 call cap, 7 budget wind-down, 3 hard `context_overflow`.
