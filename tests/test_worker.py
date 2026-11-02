@@ -4,6 +4,7 @@ import pytest
 from agent.agents import AgentQueue, task_runner
 from agent.ledger import Ledger
 from agent.memory import Memory, Task
+from agent.recap import build
 from agent.worker import INSTRUCTIONS, RESERVE, solve_step, work_task
 from tests.test_ledger import snapshot
 
@@ -837,3 +838,12 @@ def test_a_step_does_not_write_again_a_file_an_earlier_step_made(fresh):
     fm = FakeFM([reply(SLUG)])
     work_task(fm, L, m, task, whole=True, max_iterations=1)
     assert len(fm.prompts) == 1 and "Reply with the complete contents of slugs.py" in fm.prompts[0] and (root / "base.py").read_text() == "X = 1\n"
+
+def test_a_verified_step_logs_what_the_examples_leave_open_and_the_recap_lists_it(fresh):
+    root, L, m, task = fresh
+    task.detail = "Also write tests in tests/test_slugs.py. Spec: slugify('A B') == 'a-b'."
+    long_only = "def slugify(text):\n    if len(text) > 30:\n        return text\n    return '-'.join(text.lower().split())\n"
+    out = work_task(FakeFM([reply(long_only)]), L, m, task, whole=True, probe=True)
+    rows = [L.output(r["seq"]) for r in L.list() if r["action"] == "finding"]
+    assert out["ok"] and out["summary"].endswith("1 finding(s) in the recap") and rows == ["soft: 2 more small changes to slugs.py are not noticed by any test"]
+    assert "Findings (1)" in build(L, AgentQueue(L, lambda *a: None), m) and rows[0] in build(L, AgentQueue(L, lambda *a: None), m)
