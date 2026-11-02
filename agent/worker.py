@@ -62,7 +62,7 @@ def work_task(fm, ledger, memory, task, agent="root", web=None, max_iterations=4
     names = TOOLS + (("delete_file",) if any(w in text.lower() for w in ("delete", "remove")) else ()) + (("web_search", "fetch_url") if web else ())
     tools = [t for t in make_tools(ledger, web) if t.name in names]
     goal = memory.get("Goals")
-    paths = [p for p in py_paths(text) if p in goal and p not in originals and p != spec_path and not (spec_path and is_test_path(p))][:MAX_FILES]   # files the goal names (the planner's own names are often wrong), source first, then tests; with examples the harness has written the tests
+    paths = [p for p in py_paths(text) if p in goal and p not in originals and p != spec_path and not (spec_path and is_test_path(p)) and (p in task.title or p not in start_files)][:MAX_FILES]   # files the goal names (the planner's own names are often wrong), source first, then tests; with examples the harness has written the tests; a file an earlier step made is not written again unless the title names it
     paths.sort(key=is_test_path)
     whole = whole and bool(paths) and all(len(start_files.get(p, "").splitlines()) <= 60 for p in paths)   # small files only: the model gets each one whole
     args = "" if whole and spec_path else args   # the harness's tests stand in for the test files the model would have written, which the plan names

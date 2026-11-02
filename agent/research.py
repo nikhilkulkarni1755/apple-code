@@ -8,7 +8,7 @@ from .ledger import ActionError
 from .memory import Task
 from .evidence import gather
 from .handoff import BUDGET
-from .spec import join_examples, parse_examples, py_paths
+from .spec import join_examples, module_of, parse_examples, py_paths
 from .tools import _p, make_tools, visible_files
 from .verify import is_test_path
 
@@ -55,9 +55,10 @@ def _modules(item):
 
 
 def _spec(goal, item):
-    """The sentences of the goal that name the step's files: the exact wording the code has to meet (the model's own paraphrase drops it)."""
+    """The sentences of the goal that name the step's files: the exact wording the code has to meet (the model's own paraphrase drops it).
+    A sentence is about the file it names first ('File 4 is report.py ... uses inventory.py' is not about inventory.py)."""
     names = {Path(f).name for f in _work(item)[1]}
-    return " ".join(x for x in re.split(r"(?<=[.;])\s+", goal or "") if any(n in x for n in names))[:700]
+    return " ".join(x for x in re.split(r"(?<=[.;])\s+", goal or "") if any(n in x for n in names) and ((lead := module_of(x)) is None or Path(lead[1]).name in names))[:700]
 
 
 def _repeats(item, done):
