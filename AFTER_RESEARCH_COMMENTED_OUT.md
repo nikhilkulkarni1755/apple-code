@@ -130,3 +130,18 @@ One run per cell, so single results are noisy. What the evidence supports:
 - **Import hint (PR #16):** says "the file that uses it" (not only the test file) and also names `ImportError: cannot import name X from module` (define X in module.py).
 - **Retry evidence (PR #17):** a retry prompt allows 3,000 characters of project facts (1,800 on the first attempt), so a longer broken file is shown whole (files up to 60 lines).
 - **Hard `context_overflow` (this PR), cause found:** the model may ask for several tools at once. All of a batch passed the "budget reached?" check before the first result had been counted, so the guard never fired. Measured with the real model at a 2,600-token budget: 6 calls, estimated 3,877 tokens, not stopped. The helper now runs tool calls one at a time through a gate and checks the budget inside it, and stops 900 tokens early so one more result and the answer still fit. Same test after the fix: stopped after 3 calls at an estimated 2,043; at 7,168 a normal run finishes untouched. The installed copy needs `./install.sh` to rebuild the helper.
+
+## Rerun round 5 (after the four edits above) — P1, P2, P3 once each
+| Prompt | Result | Time | What happened |
+|---|---|---|---|
+| P1 | not solved | 192 s | `slugs.py` verified (first attempt). The first planning pass listed only slugify; the re-plan produced a mangled step (`Plan the rest of the goal: research how to count words, write word_count(text) in words.py`) that failed on a stray ``` line inside `words.py` and `tests/test_words.py` |
+| P2 | not solved | 164 s | the first planning pass listed only `Inventory`; the step was blocked (`DID NOT RAISE ValueError`, 3 times the same); the re-plan then added nothing, so `report.py` was never planned and the goal ended |
+| P3 | not solved | 1025 s | one `pytest` run **hung for 300 s** (generated code that does not terminate) and the model's first attempts failed `DID NOT RAISE ValueError`; no budget wind-down or `context_overflow` in any of the three runs |
+
+Observations:
+1. **The overflow fix held:** 0 hard `context_overflow` in 13 worker sessions (before: 1-2 per P1/P3 run).
+2. **Planning is complete only when the model lists every file.** In two of three runs the first pass named one module. The re-plan then saw no *done* step to build on (the one step was blocked), listed nothing new, and the goal ended "done" without ever attempting the other module. The goal itself names every file (`words.py`, `report.py`, `calc.py`), so a gap can be found without the model: a file the goal names that no step names.
+3. **A stray fence in the middle of a file:** `create_file` strips a fence that wraps the whole content, but not a closing ``` after the code (P1: `words.py:14: invalid syntax in `` ` `` `).
+4. **A hung test costs the run its time:** the default test timeout is 300 s of a 780 s run.
+
+Next edits I would make, in order: (1) after the model plans, add a step for every `.py` file the goal names that no step names (`Create words.py` + the goal's sentence as its spec); (2) cut a file's content at a closing ``` line; (3) lower the test timeout from 300 s to 120 s.
