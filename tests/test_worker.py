@@ -507,7 +507,7 @@ def test_the_next_agent_gets_the_handoff_in_its_prompt_and_finishes_the_job(tmp_
 
 def research_and_work(ctx, task, fm):
     from agent.worker import solve_step
-    return solve_step(fm)(ctx, task)
+    return solve_step(fm, whole=False)(ctx, task)
 
 
 def test_a_continuation_of_a_continuation_is_the_limit(env):
@@ -630,7 +630,7 @@ def test_a_goal_goes_through_research_work_and_verification_end_to_end(tmp_path)
             model(prompt, tools)
             return {"content": "DONE", "stopped": False, "calls": []}
 
-    q = AgentQueue(L, task_runner(solve_step(Scripted([]))))
+    q = AgentQueue(L, task_runner(solve_step(Scripted([]), whole=False)))
     q.start("Add a subtract function")
     q.run()
     m = Memory(L)
@@ -683,7 +683,7 @@ def test_a_task_that_cannot_be_verified_blocks_the_agent_and_leaves_the_project_
             self.calls += 1
             return {"content": "DONE", "stopped": False, "calls": []}
 
-    q = AgentQueue(L, task_runner(solve_step(Scripted([]))))
+    q = AgentQueue(L, task_runner(solve_step(Scripted([]), whole=False)))
     q.start("Add a subtract function")
     q.run()
     assert {r["id"]: r["status"] for r in q.agents()} == {"root": "blocked"}
@@ -763,3 +763,37 @@ def test_a_retry_shows_a_whole_longer_file_that_the_failure_names(tmp_path):
     fm = FakeFM([wrong, idle])
     work_task(fm, L, m, m.tasks()[0], max_iterations=2)
     assert len(body) > 1800 and "# line 54 of a longer helper\n    return t +" in fm.prompts[1]
+
+
+# ------------------------------------------------------------------ whole-file mode
+def reply(code):
+    return lambda t, prompt=None: {"content": code, "stopped": False, "calls": []}
+
+
+SLUG = "def slugify(text):\n    return '-'.join(text.lower().split())\n"
+SLUG_TESTS = "from slugs import slugify\n\n\ndef test_slugify():\n    assert slugify('Hello World') == 'hello-world'\n"
+
+
+@pytest.fixture
+def fresh(tmp_path):
+    L = Ledger(tmp_path)
+    m = Memory(L)
+    m.add_plan("Slugs", [Task("Create slugs.py", "Also write tests in tests/test_slugs.py", "pytest tests/test_slugs.py passes", kind="code")])
+    return tmp_path, L, m, m.tasks()[0]
+
+
+def test_whole_file_mode_has_the_model_reply_with_each_file_and_the_harness_writes_it(fresh):
+    root, L, m, task = fresh
+    fm = FakeFM([reply("```python\n" + SLUG + "```\nThat is the file."), reply(SLUG_TESTS)])
+    out = work_task(fm, L, m, task, whole=True)
+    assert out["ok"] and (root / "slugs.py").read_text() == SLUG and (root / "tests" / "test_slugs.py").read_text() == SLUG_TESTS
+    assert fm.tool_names == [[], []] and "Reply with the complete contents of slugs.py" in fm.prompts[0]
+    assert "Reply with the complete contents of tests/test_slugs.py" in fm.prompts[1] and "def slugify" in fm.prompts[1]   # the tests are written from the real code
+
+
+def test_whole_file_mode_rewrites_the_files_after_a_failure_and_ignores_an_unchanged_one(fresh):
+    root, L, m, task = fresh
+    fm = FakeFM([reply(SLUG.replace("'-'", "''")), reply(SLUG_TESTS), reply(SLUG), reply(SLUG_TESTS)])
+    out = work_task(fm, L, m, task, whole=True)
+    assert out["ok"] and out["summary"].startswith("verified after 2 attempt(s)") and "hello-world" in fm.prompts[2]
+    assert fm.temperatures == [None, None, 0.8, 0.8]
