@@ -416,6 +416,20 @@ def test_a_step_carries_the_sentences_of_the_goal_that_name_its_files(tmp_path):
     assert second.detail == "a report. Spec: Round 2: write report(inventory) in report.py that returns name: qty strings sorted by name."
 
 
+def test_a_sentence_is_about_the_file_it_names_first_not_one_it_only_uses(tmp_path):
+    root = tmp_path / "ws"
+    root.mkdir()
+    L = Ledger(root)
+    m = Memory(L)
+    goal = ("File 1 is inventory.py with class Inventory, for example Inventory().count('a') == 0, and its tests are in tests/test_inventory.py. "
+            "File 2 is report.py with report(inventory) that imports Inventory from inventory.py, and its tests are in tests/test_report.py.")
+    m.add_plan(goal, [Task("Plan: goal", goal, kind="research")])
+    script = lambda t: [t["add_actionable"](title="Create inventory.py", kind="code"), t["add_actionable"](title="Create report.py", kind="code")]
+    research(FakeFM(script), L, m, "1")
+    first, second = m.tasks()[0].children
+    assert "report.py" not in first.detail and "imports Inventory from inventory.py" in second.detail and second.detail.count("inventory.py") == 1
+
+
 def test_a_test_only_step_for_a_module_that_already_has_a_code_step_is_dropped(env):
     _, L, m = env
     assert research(FakeFM(lambda t: t["add_actionable"](title="Write slugify in slugs.py with tests in tests/test_slugs.py", kind="code")), L, m, "1")["added"] == 1

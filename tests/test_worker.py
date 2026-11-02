@@ -827,3 +827,13 @@ def test_a_name_the_model_forgot_to_import_is_named_before_any_test_runs(fresh):
     fm = FakeFM([reply(SLUG), reply("def test_slugify():\n    assert slugify('Hello World') == 'hello-world'\n"), reply(SLUG), reply(SLUG_TESTS)])
     out = work_task(fm, L, m, task, whole=True)
     assert out["ok"] and "Name error: tests/test_slugs.py:2: NameError: name 'slugify' is not defined" in fm.prompts[2] and "from slugs import slugify" in fm.prompts[2]
+
+
+def test_a_step_does_not_write_again_a_file_an_earlier_step_made(fresh):
+    root, L, m, task = fresh
+    (root / "base.py").write_text("X = 1\n")
+    task.detail = "Write slugs.py. It imports X from base.py. Spec: slugify('A B') == 'a-b'."
+    m.set("Goals", "Create slugs.py. It imports X from base.py.")
+    fm = FakeFM([reply(SLUG)])
+    work_task(fm, L, m, task, whole=True, max_iterations=1)
+    assert len(fm.prompts) == 1 and "Reply with the complete contents of slugs.py" in fm.prompts[0] and (root / "base.py").read_text() == "X = 1\n"
