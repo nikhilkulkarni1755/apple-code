@@ -96,6 +96,8 @@ def work_task(fm, ledger, memory, task, agent="root", web=None, max_iterations=4
             head.append(f"Reply with the complete contents of {path}.")
             if it > 1:
                 head.append("A failing test can be the wrong one: the task and its Spec are the truth. Make the files agree with them, and drop any assertion the task does not state.")
+            if failure in shown:   # the model repeats a mistake it was shown: say so, and ask for another way
+                head.append("You were shown exactly this failure before and your last change did not fix it. Do not write the same code again: take the first failing example, work out by hand what each line does with it, and write the file another way.")
         if earlier:
             head.append("Handoff from the agent before you:\n" + earlier)
         if tight:
@@ -112,7 +114,7 @@ def work_task(fm, ledger, memory, task, agent="root", web=None, max_iterations=4
     baseline = judge(args, code, out, err, edited=True)
     passed_before = baseline.summary.get("passed", 0)
     failure = "" if baseline.ok else failure_summary(out) or "; ".join(baseline.reasons)
-    last, stalls, lean, budget_hit = ["nothing was attempted"], 0, False, False
+    last, stalls, lean, budget_hit, shown = ["nothing was attempted"], 0, False, False, []   # shown: the failures the model has been given
     for it in range(1, max_iterations + 1):
         with ledger.scope(task=task.id, kind="code", iteration=it):
             temperature = RETRY_TEMPERATURE if it > 1 else None
@@ -128,6 +130,7 @@ def work_task(fm, ledger, memory, task, agent="root", web=None, max_iterations=4
                         create(path=path, content=fenced.group(1) if fenced else r["content"])
                     except ActionError:
                         pass   # the same file again: nothing changed
+        shown.append(failure)
         if r.get("reason") == "budget":
             budget_hit = True
             say(f"  attempt {it}: used {r.get('estimated') or r.get('tokens')} of {r.get('context', 8192)} tokens: wound down")
