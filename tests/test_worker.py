@@ -508,7 +508,7 @@ def test_the_next_agent_gets_the_handoff_in_its_prompt_and_finishes_the_job(tmp_
 
 def research_and_work(ctx, task, fm):
     from agent.worker import solve_step
-    return solve_step(fm, whole=False)(ctx, task)
+    return solve_step(fm, whole=False, probe=False)(ctx, task)
 
 
 def test_a_continuation_of_a_continuation_is_the_limit(env):
@@ -631,7 +631,7 @@ def test_a_goal_goes_through_research_work_and_verification_end_to_end(tmp_path)
             model(prompt, tools)
             return {"content": "DONE", "stopped": False, "calls": []}
 
-    q = AgentQueue(L, task_runner(solve_step(Scripted([]), whole=False)))
+    q = AgentQueue(L, task_runner(solve_step(Scripted([]), whole=False, probe=False)))
     q.start("Add a subtract function")
     q.run()
     m = Memory(L)
@@ -684,7 +684,7 @@ def test_a_task_that_cannot_be_verified_blocks_the_agent_and_leaves_the_project_
             self.calls += 1
             return {"content": "DONE", "stopped": False, "calls": []}
 
-    q = AgentQueue(L, task_runner(solve_step(Scripted([]), whole=False)))
+    q = AgentQueue(L, task_runner(solve_step(Scripted([]), whole=False, probe=False)))
     q.start("Add a subtract function")
     q.run()
     assert {r["id"]: r["status"] for r in q.agents()} == {"root": "blocked"}
