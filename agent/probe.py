@@ -94,7 +94,12 @@ def findings(root, path, text, examples, props=(), timeout=30):
     run = probe(root, module, examples, props)
     base = run["calls"]
     out = [f"hard: {r['call']} does not finish" for r in base if r["out"] == "hang"]
-    out += [f"soft: {r['call']} raises {r['out'][7:]}, which the task does not mention" for r in base if r["out"].startswith("raises ") and r["out"][7:] not in text]
+    raised = {}
+    for r in base:
+        if r["out"].startswith("raises ") and r["out"][7:] not in text:
+            raised.setdefault((r["call"].split("(")[0], r["out"][7:]), []).append(r["call"])
+    out += [f"soft: {min(calls, key=len)} raises {error}, which the task does not mention" + (f" (and {len(calls) - 1} other inputs of {name})" if len(calls) > 1 else "")
+            for (name, error), calls in raised.items()]   # one finding for each function and error, with the shortest input
     out += [f"soft: {r['call']} {note}" for r in base for note in r["notes"]]
     out += [f"{'hard' if r['out'] == 'hang' else 'soft'}: the property `{r['check']}` {'does not hold' if r['out'] == 'false' else r['out']} for {r['input']}: the code or the property is wrong"
             for r in run["properties"] if r["out"] != "ok"]
@@ -110,7 +115,7 @@ def findings(root, path, text, examples, props=(), timeout=30):
             code, _, _, err = LocalExecutor().run(f"{python} {shlex.quote(str(Path(__file__).with_name('pytest_limit.py')))} -q -x -p no:cacheprovider --test-limit 2", scratch, timeout)
             if code == 0 and not err:   # no test noticed the change: find an input where it shows
                 now = {r["call"]: r["out"] for r in sweep(Path(scratch), module, examples)}
-                shown = next(((r["call"], r["out"], now[r["call"]]) for r in base if r["call"] in now and now[r["call"]] != r["out"]), None)
+                shown = min(((r["call"], r["out"], now[r["call"]]) for r in base if r["call"] in now and now[r["call"]] != r["out"]), key=lambda t: len(t[0]) + len(t[1]) + len(t[2]), default=None)   # the shortest to read
                 if shown and len(out) < MAX_FINDINGS:
                     out.append(f"soft: no example settles line {line} ({what}): {shown[0]} gives {shown[1]}, and {shown[2]} with the change")
                 else:

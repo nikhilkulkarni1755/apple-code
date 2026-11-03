@@ -73,3 +73,9 @@ def test_a_property_that_fails_names_the_values_and_one_that_holds_is_silent(tmp
     assert len(failing) == 2 and not any("positive(n) == (n > 0)" in f for f in failing)
     assert any("`positive(n) == (n > 5)` does not hold for {'n':" in f and "the code or the property is wrong" in f for f in failing)
     assert any("`len(first(x)) >= 0` raises" in f for f in failing)
+
+
+def test_one_finding_for_each_function_and_error_with_the_shortest_input(tmp_path):
+    (tmp_path / "m.py").write_text("def second(items: list) -> int:\n    return items[1]\n")
+    got = findings(tmp_path, "m.py", "second", ["second([1, 2]) == 2"])
+    assert got == ["soft: second([]) raises IndexError, which the task does not mention (and 1 other inputs of second)"]

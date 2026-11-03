@@ -140,3 +140,18 @@ imports in P2, P3, P4), and a step's Spec picked up the examples of the next fil
 
 Also seen: a step whose file an earlier step already made is rejected with "no files were changed" even though its tests pass; and a blocked
 step rolls back its file, so the steps that import it fail too.
+
+### Stage 2: edge-input sweep and small changes to the code, reported (PR #33)
+
+Same set, two runs each. Findings never reject a step, so the solve rate should not move: **3 of 18 solved** (P1 twice, P8 once), against 4 of 18 in
+stage 1, which is run-to-run noise. The 18 runs logged 67 findings.
+
+- **Useful**: `average([]) raises ZeroDivisionError` and `chunk([1, 2, 3], 0) raises ValueError` on the vague prompt P8, where the task states neither;
+  `primes_up_to(2)` gives `[2]` and `[]` with `n + 1` changed to `n - 1`, so no example settles the upper bound; `size < 1` against `size <= 1`
+  in `chunk`. Each names an input the author could turn into an example.
+- **Noise**: the same error repeated for every edge input of a function (`age_on('', ...)`, `age_on(' ', ...)`, ...: eight lines for one
+  fact), and a distinguishing input chosen by order, so it was sometimes a 1000-item list. Fixed in the next change: one finding for each function
+  and error, with the shortest input.
+- **Limit**: the sweep and the changes find unpinned code, not missing behaviour. A function that forgets a case (no `.lower()`) shows nothing,
+  because nothing in the code was changed to expose it. Classes get little, since a method is only called on a fresh object.
+
