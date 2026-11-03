@@ -182,7 +182,7 @@ def test_a_model_that_gives_nothing_or_fails_yields_no_examples():
     ("x: int", "f(x) >= 0 and f(-x) >= 0", ({"x": "int"}, "f(x) >= 0 and f(-x) >= 0")),
     ("x: list", "len(y) > 0", None),                      # y is declared nowhere
     ("x: set", "f(x) == 1", None), ("", "f(1) == 1", None), ("x int", "f(x) == 1", None), ("x: int, x: int", "f(x) == 1", None),
-    ("x: int", "f(x)", None), ("x: int", "1 < 2", None),   # not a comparison, or nothing is called
+    ("x: int", "f(x)", None), ("x: int", "1 < 2", None), ("x: str", "len(x) > 0", None),   # not a comparison, or nothing of the project is called
     ("x: int", "open(x) == 1", None), ("x: int", "f(x).__class__ == 1", None), ("x: int", "f(x) ==", None),
 ])
 def test_a_property_declares_its_variables_and_checks_with_the_same_safety_rules_as_an_example(variables, check, expected):

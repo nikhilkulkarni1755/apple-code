@@ -121,7 +121,8 @@ def parse_property(variables, check):
         return None
     if len(declared) != len(pairs) or not all(k.isidentifier() and not k.startswith("_") and t in PROPERTY_TYPES for k, t in declared.items()) or not _safe(tree):
         return None
-    if not isinstance(tree.body, (ast.Compare, ast.BoolOp)) or not any(isinstance(n, ast.Call) for n in ast.walk(tree)) or _needs([ast.unparse(tree)])[1] - set(declared):
+    calls, free = _needs([ast.unparse(tree)])   # it must call the code under test: 'len(x) > 0' says nothing about it
+    if not isinstance(tree.body, (ast.Compare, ast.BoolOp)) or not calls or free - set(declared):
         return None
     return declared, ast.unparse(tree)
 
