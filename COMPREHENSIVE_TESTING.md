@@ -113,4 +113,29 @@ A run counts as solved when the independent `check.py` in the prompt file passes
 
 ## Results
 
-(Appended per stage.)
+### Stage 1: examples become tests, a name check, a time limit (PRs #30, #31)
+
+Two runs of each prompt, 4 attempts per step, 1800 s cap. "Solved" means the independent `check.py` of the prompt passes.
+
+| Prompt | Run a | Run b | What stopped the unsolved runs (all in the model's code) |
+|---|---|---|---|
+| P1 functions | solved | no | `unique`/`chunk` returned a generator, not a list |
+| P2 chain | no | no | `tokenize` and `evaluate` wrong; `calc.py` never imported `tokenize` after four tries |
+| P3 classes | no | no | `from typing import int`; `report` called `.items()` on a list |
+| P4 Pillow | no | no | `histogram_counts` returned 0 where 1 was expected |
+| P5 numpy, scikit-learn | no | no | `min_max` returned a list; `UnboundLocalError` in `evaluate` |
+| P6 pydicom | no | no | misused `PersonName` |
+| P7 Pillow drawing | no | solved | a module whose step failed was missing for the next |
+| P8 vague functions | solved | solved | |
+| P9 vague classes | no | no | a failed step leaves its module missing for the steps that import it |
+
+**4 of 18 solved, against 0 of 12 in the ladder before.** The shape of the failures changed: no run was stopped by a test the model
+wrote (the harness writes them now). Every rejection is the model's code failing the author's examples, and the error text the model gets back
+is exact (`assert 0 == 1`, `'list' object has no attribute 'items'`). It still repeated the same mistake over four attempts in most
+cases, so the next limit is the model's ability to act on a precise failure, not the tests.
+
+Two harness bugs the runs exposed, fixed before the numbers above (PR #31): a later step rewrote a module an earlier step had verified (circular
+imports in P2, P3, P4), and a step's Spec picked up the examples of the next file's sentence. An earlier partial pass with them is not counted.
+
+Also seen: a step whose file an earlier step already made is rejected with "no files were changed" even though its tests pass; and a blocked
+step rolls back its file, so the steps that import it fail too.
