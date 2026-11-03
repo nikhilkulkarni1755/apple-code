@@ -155,3 +155,37 @@ stage 1, which is run-to-run noise. The 18 runs logged 67 findings.
 - **Limit**: the sweep and the changes find unpinned code, not missing behaviour. A function that forgets a case (no `.lower()`) shows nothing,
   because nothing in the code was changed to expose it. Classes get little, since a method is only called on a fresh object.
 
+### Stage 3: properties the model proposes, and examples that run the program (PR #34)
+
+Same set plus P10 (a command line program, `wc.py`), two runs each: **7 of 20 solved**, the best so far (stage 1: 4 of 18, stage 2: 3 of 18).
+
+| Prompt | Run a | Run b |
+|---|---|---|
+| P1 | solved | solved |
+| P4 Pillow | no | solved |
+| P7 Pillow drawing | solved | solved |
+| P8 | solved | solved |
+| P2, P3, P5, P6, P9 | no | no |
+| P10 program | no | no |
+
+The solve rates of the three stages are within the spread of single runs (3 to 7 of 18 to 20), so the stages are not ranked by them. What the
+stages did change is what the failures look like and what the harness can say about code that passes.
+
+- **Properties were noise.** 20 of the 66 findings were properties, nearly all meaningless: `len(text) > 0` for `''`, or variables named after a
+  result (`unique_result`), or a function from another module (`chunk` inside `primes.py`'s namespace). The model at 8k does not write
+  useful properties from a task and a file. Not rerun after the fix: a property must now call something from the module under test (a
+  filter, `parse_property`), so `len(x) > 0` is dropped before it is tried.
+- **Program examples work, the model does not yet.** `cli(...)` ran the program in a copy of the project and the harness tests passed on the
+  reference. In P10 run b the model's `wc.py` passed all four examples and still failed the independent check: it printed `1` to
+  standard output for a missing file, which the examples (exit code only) did not pin. No finding named it, because the sweep calls functions,
+  not programs. Run a printed nothing at all.
+- **A model-written test file can overwrite the harness's** (`test_wc_spec.py` in a continuation step). It is protected from being weakened
+  but not from being the model's write target when the planner names it.
+
+## What is left
+
+1. The sweep for programs: call the script with edge arguments and report non-empty output on an error exit.
+2. The model still repeats a mistake across four attempts after an exact failure message. A retry that shows the failing example next to the
+   function it calls, and asks for a different approach, is the next thing to measure.
+3. A blocked step takes its file with it, so the steps that import it fail for a reason that is not their own.
+
