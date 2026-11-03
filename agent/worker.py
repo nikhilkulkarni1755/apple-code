@@ -7,8 +7,9 @@ from .evidence import gather
 from .handoff import BUDGET, MAX_CONTINUATIONS, continuation_depth, looked_at, note
 from .ledger import ActionError
 from .memory import Task
+from .probe import findings
 from .research import research_step
-from .spec import ensure_spec_test, join_examples, module_of, propose_examples, py_paths
+from .spec import ensure_spec_test, join_examples, module_of, parse_examples, propose_examples, py_paths
 from .runner import run_tests
 from .tools import make_tools, visible_files
 from .verify import (acceptance_args, failure_summary, frozen_check, import_hint, is_test_path, judge, name_errors, protected_violations, red_check,
@@ -32,7 +33,7 @@ def _edits_of_the_task(ledger, agent, task_id, iteration=None):
             if not r["path"].endswith("MEMORY.md") and r["iteration"] != 0]   # bookkeeping and the harness's own spec tests are not the model's work
 
 
-def work_task(fm, ledger, memory, task, agent="root", web=None, max_iterations=4, max_tool_calls=12, say=None, propose=False, whole=False):
+def work_task(fm, ledger, memory, task, agent="root", web=None, max_iterations=4, max_tool_calls=12, say=None, propose=False, whole=False, probe=False):
     """Carry out one code task. Returns {'ok', 'summary', 'evidence'}; on failure the task's edits are rolled back (redo restores them)."""
     say = say or (lambda text: None)
     ledger.sync_external()                           # files you changed by hand since the last record are noted, not refused
@@ -173,7 +174,12 @@ def work_task(fm, ledger, memory, task, agent="root", web=None, max_iterations=4
         record(it, verdict.ok, seq, why if new == why else f"{why} | {new}")   # the ledger row says what pytest reported, not only that it failed
         if verdict.ok:
             files = sorted({r["path"] for r in _edits_of_the_task(ledger, agent, task.id)})
-            return {"ok": True, "summary": f"verified after {it} attempt(s); changed {', '.join(files)}",
+            src = module_of(text) if probe else None
+            found = findings(ledger.root, src[1], text, parse_examples(f"{task.done_when};{task.detail}")) if src else []   # what the examples leave open
+            with ledger.scope(task=task.id, kind="test", iteration=it):
+                for f in found:
+                    ledger.log_read("finding", task.id, {"module": src[1]}, f)
+            return {"ok": True, "summary": f"verified after {it} attempt(s); changed {', '.join(files)}" + (f"; {len(found)} finding(s) in the recap" if found else ""),
                     "evidence": f"run #{seq}: pytest exit 0, {verdict.summary.get('passed')} passed"}
         stalls = stalls + 1 if (not rows and new == failure) else 0
         failure, last = new, verdict.reasons
@@ -216,6 +222,6 @@ def _fits(fm, tools, prompt, instructions):
     return c["tools"] + c["instructions"] + c["prompt"] + RESERVE <= c.get("context", 8192)
 
 
-def solve_step(fm, web=None, say=None, whole=True):
+def solve_step(fm, web=None, say=None, whole=True, probe=True):
     """The step for agents.task_runner: research tasks are researched, code tasks are worked and verified."""
-    return research_step(fm, web, worker=lambda ctx, task: work_task(fm, ctx.ledger, ctx.memory, task, agent=ctx.id, web=web, say=say, whole=whole))
+    return research_step(fm, web, worker=lambda ctx, task: work_task(fm, ctx.ledger, ctx.memory, task, agent=ctx.id, web=web, say=say, whole=whole, probe=probe))

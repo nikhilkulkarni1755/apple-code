@@ -50,6 +50,9 @@ def build(ledger, queue, memory):
     issues = Counter(_label(r["error"]) for r in verify if r["status"] == "rejected")
     if issues:
         out.append("Attempts rejected, by reason: " + ", ".join(f"{label} x{n}" for label, n in issues.most_common()))
+    found = [ledger.output(r["seq"]) for r in rows if r["action"] == "finding"]
+    if found:
+        out += [f"Findings ({len(found)}): what the examples leave open, found by the harness, not the model:"] + [f"  - {f}" for f in found]
     if errors:
         out.append("Model errors: " + ", ".join(f"{k} x{n}" for k, n in errors.items()))
     if sessions:
