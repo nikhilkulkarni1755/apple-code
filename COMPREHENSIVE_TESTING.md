@@ -182,6 +182,17 @@ stages did change is what the failures look like and what the harness can say ab
 - **A model-written test file can overwrite the harness's** (`test_wc_spec.py` in a continuation step). It is protected from being weakened
   but not from being the model's write target when the planner names it.
 
+### Stage 4: a repeated failure is called out (PR #36)
+
+Same set, two runs each: **9 of 20 solved** (stage 3: 7 of 20). P1, P7 and P8 solved in both runs, P3 in both (it had not been solved in
+any earlier stage), P4 in one. P2, P5, P6, P9 and P10 did not.
+
+The one change: when a retry is shown a failure it was already shown, the prompt says so and asks for another way (trace the first failing
+example by hand, write the file differently). The difference from stage 3 (two runs more solved, and a prompt it never solved before) is
+inside the spread of single runs, so it is a sign and not a result. In the ledgers a repeated failure occurred 62 times in 16 runs; a step was
+solved after one in only 5 of those, so most repeats still end the same way. The strongest sign is where the model could act on the
+message: P3 (`from typing import int`, `.items()` on a list).
+
 ## What is left
 
 1. The sweep for programs: call the script with edge arguments and report non-empty output on an error exit.
