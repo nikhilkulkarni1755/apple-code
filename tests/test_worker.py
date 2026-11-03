@@ -847,3 +847,12 @@ def test_a_verified_step_logs_what_the_examples_leave_open_and_the_recap_lists_i
     rows = [L.output(r["seq"]) for r in L.list() if r["action"] == "finding"]
     assert out["ok"] and out["summary"].endswith("1 finding(s) in the recap") and rows == ["soft: 2 more small changes to slugs.py are not noticed by any test"]
     assert "Findings (1)" in build(L, AgentQueue(L, lambda *a: None), m) and rows[0] in build(L, AgentQueue(L, lambda *a: None), m)
+
+
+def test_a_failure_the_model_was_shown_and_did_not_fix_is_called_out_with_a_request_for_another_way(fresh):
+    root, L, m, task = fresh
+    wrong = SLUG.replace("'-'", "''")
+    fm = FakeFM([reply(wrong), reply(SLUG_TESTS), reply(wrong + "\n"), reply(SLUG_TESTS), reply(SLUG), reply(SLUG_TESTS)])
+    work_task(fm, L, m, task, whole=True)
+    again = "Do not write the same code again"
+    assert again not in fm.prompts[0] and again not in fm.prompts[2] and again in fm.prompts[4]   # the second attempt saw the failure for the first time
